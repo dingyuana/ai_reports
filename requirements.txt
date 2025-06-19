@@ -1,0 +1,10 @@
+# 实验报告自动批阅系统依赖项
+
+fastapi>=0.95.2
+uvicorn>=0.22.0
+python-dotenv>=1.0.0
+python-multipart>=0.0.6
+PyPDF2>=3.0.0
+python-docx>=0.8.11
+requests>=2.31.0
+loguru>=0.7.0

@@ -6,7 +6,9 @@ from fastapi.responses import FileResponse, JSONResponse
 import json
 import os
 import shutil
-from typing import Optional
+import csv
+from datetime import datetime
+from typing import Optional, List
 import uvicorn
 from pydantic import BaseModel
 
@@ -51,7 +53,7 @@ async def api_root():
 @app.post("/api/set_grading_criteria")
 async def set_grading_criteria(criteria_model: CriteriaModel):
     try:
-        grading_system.set_criteria(criteria_model.criteria)
+        grading_system.set_grading_criteria(criteria_model.criteria)
         return {"status": "success", "message": "评分标准设置成功"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"设置评分标准失败: {str(e)}")
@@ -83,10 +85,18 @@ async def upload_report(
         raise HTTPException(status_code=500, detail=f"报告评分失败: {str(e)}")
 
 # 获取所有报告列表
-@app.get("/api/reports")
-async def get_reports():
+from urllib.parse import unquote
+
+@app.get("/api/reports/")
+async def get_reports(directory: Optional[str] = None):
     try:
-        reports = grading_system.get_all_reports()
+        if directory:
+            # URL解码目录名称
+            decoded_directory = unquote(directory)
+            reports = grading_system.get_all_reports(decoded_directory)
+        else:
+            # 如果没有提供目录，则获取根目录的报告
+            reports = grading_system.get_all_reports()
         return {"status": "success", "reports": reports}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取报告列表失败: {str(e)}")
@@ -103,6 +113,117 @@ async def process_all_reports():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"处理报告失败: {str(e)}")
+
+# 批注报告请求模型
+class AnnotateScanModel(BaseModel):
+    directory: str
+
+@app.post("/api/annotate")
+async def annotate_report(scan_model: AnnotateScanModel):
+    try:
+        # 解码目录名称
+        decoded_directory = unquote(scan_model.directory)
+        scan_path = os.path.join(REPORTS_DIR, decoded_directory)
+        
+        # 检查目录是否存在
+        if not os.path.exists(scan_path):
+            raise HTTPException(status_code=404, detail=f"目录不存在: {decoded_directory}")
+        
+        # 存储所有文档的内容
+        documents_content = []
+        # 存储不合格的报告
+        failed_reports = []
+        
+        # 遍历指定目录
+        for filename in os.listdir(scan_path):
+            file_path = os.path.join(scan_path, filename)
+            
+            # 检查是否是文件
+            if not os.path.isfile(file_path):
+                continue
+                
+            # 获取文件扩展名
+            ext = os.path.splitext(filename)[1].lower()
+            
+            # 只处理PDF和Word文档
+            if ext not in ['.pdf', '.doc', '.docx']:
+                continue
+                
+            try:
+                # 使用GradingSystem的文档处理器读取内容
+                if ext in grading_system.document_processors:
+                    processor = grading_system.document_processors[ext]
+                    content = processor.extract_text(file_path)
+                else:
+                    continue  # 跳过不支持的文件类型
+                
+                # 判断报告是否合格
+                is_qualified = len(content) >= 100
+                report_status = "合格" if is_qualified else "不合格"
+                
+                # 将文件名和内容添加到结果列表
+                documents_content.append({
+                    "filename": filename,
+                    "type": "PDF" if ext == '.pdf' else "Word",
+                    "content": content if is_qualified else "报告不合格",
+                    "status": report_status,
+                    "size": os.path.getsize(file_path)
+                })
+                
+                # 如果报告不合格，添加到不合格列表
+                if not is_qualified:
+                    # 从文件名中提取用户名（假设格式为"用户名_其他内容.扩展名"）
+                    username = filename.split('_')[0] if '_' in filename else filename.split('.')[0]
+                    failed_reports.append({
+                        "username": username,
+                        "status": "不合格",
+                        "filename": filename
+                    })
+                    
+            except Exception as doc_error:
+                # 如果处理某个文档失败，记录错误但继续处理其他文档
+                documents_content.append({
+                    "filename": filename,
+                    "type": "PDF" if ext == '.pdf' else "Word",
+                    "error": str(doc_error),
+                    "status": "处理失败",
+                    "size": os.path.getsize(file_path)
+                })
+        
+        # 如果有不合格的报告，将它们保存为CSV文件
+        csv_path = None
+        if failed_reports:
+            # 创建输出目录（如果不存在）
+            if not os.path.exists(OUTPUT_DIR):
+                os.makedirs(OUTPUT_DIR)
+            
+            # 生成CSV文件名（使用时间戳确保唯一性）
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            csv_filename = f"不合格报告_{timestamp}.csv"
+            csv_path = os.path.join(OUTPUT_DIR, csv_filename)
+            
+            # 写入CSV文件
+            with open(csv_path, 'w', newline='', encoding='utf-8-sig') as csvfile:
+                fieldnames = ['用户名', '状态', '文件名']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                
+                writer.writeheader()
+                for report in failed_reports:
+                    writer.writerow({
+                        '用户名': report['username'],
+                        '状态': report['status'],
+                        '文件名': report['filename']
+                    })
+        
+        return {
+            "message": f"成功扫描了 {len(documents_content)} 个文档",
+            "documents": documents_content,
+            "failed_count": len(failed_reports),
+            "csv_file": csv_path if failed_reports else None
+        }
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"文档扫描失败: {str(e)}")
 
 # 下载评分汇总表
 @app.get("/api/summary/download")

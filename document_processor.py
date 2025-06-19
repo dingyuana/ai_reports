@@ -1,3 +1,19 @@
+"""
+文件名: document_processor.py
+作用: 实现文档处理器，用于处理不同类型的学生报告文件（PDF和Word）
+实现路径:
+    1. 定义DocumentProcessor抽象基类，规定文档处理的基本接口
+    2. 实现PDFProcessor类，处理PDF格式的报告文件
+    3. 实现WordProcessor类，处理Word格式的报告文件（.docx和.doc）
+功能:
+    - 从文档中提取文本内容
+    - 在文档上添加评语和分数
+    - 在文档上添加对号标注
+使用方式:
+    - 在grading_system.py中被实例化并使用
+    - 根据文件扩展名选择相应的处理器
+"""
+
 import os
 import io
 from typing import List, Dict, Any
@@ -12,6 +28,7 @@ from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 import pdfplumber
 import win32com.client
 
+# 配置日志记录器
 logger = logging.getLogger(__name__)
 
 
@@ -78,6 +95,73 @@ class PDFProcessor(DocumentProcessor):
         with open(output_path, "wb") as out_f:
             output_pdf.write(out_f)
 
+    def add_annotations(self, file_path: str, annotations: List[Dict[str, Any]], output_path: str) -> bool:
+        """在PDF上添加批注
+        
+        Args:
+            file_path: 原始PDF文件路径
+            annotations: 批注列表，每个批注包含页码、位置和内容
+            output_path: 输出文件路径
+            
+        Returns:
+            bool: 处理是否成功
+        """
+        try:
+            input_pdf = PdfReader(file_path)
+            output_pdf = PdfWriter()
+            
+            # 处理每一页
+            for page_num in range(len(input_pdf.pages)):
+                page = input_pdf.pages[page_num]
+                
+                # 找出当前页的所有批注
+                page_annotations = [a for a in annotations if a.get("page", 0) == page_num]
+                
+                if page_annotations:
+                    # 创建批注层
+                    packet = io.BytesIO()
+                    can = canvas.Canvas(packet, pagesize=letter)
+                    can.setFont("Helvetica", 10)
+                    
+                    # 添加每个批注
+                    for annotation in page_annotations:
+                        x = annotation.get("x", 50)
+                        y = annotation.get("y", 50)
+                        text = annotation.get("text", "")
+                        color = annotation.get("color", "red")
+                        
+                        # 设置颜色
+                        if color == "red":
+                            can.setFillColor(Color(1, 0, 0, alpha=0.7))
+                        elif color == "green":
+                            can.setFillColor(Color(0, 1, 0, alpha=0.7))
+                        elif color == "blue":
+                            can.setFillColor(Color(0, 0, 1, alpha=0.7))
+                        else:
+                            can.setFillColor(Color(0, 0, 0, alpha=0.7))
+                        
+                        # 绘制批注
+                        can.drawString(x, y, text)
+                    
+                    can.save()
+                    packet.seek(0)
+                    annotation_pdf = PdfReader(packet)
+                    
+                    # 合并批注到当前页
+                    page.merge_page(annotation_pdf.pages[0])
+                
+                output_pdf.add_page(page)
+            
+            # 保存输出文件
+            with open(output_path, "wb") as out_f:
+                output_pdf.write(out_f)
+                
+            return True
+            
+        except Exception as e:
+            logger.error(f"添加批注时出错: {e}", exc_info=True)
+            return False
+    
     def add_checkmarks(self, file_path: str, output_path: str) -> None:
         """在PDF每页添加对号标注"""
         input_pdf = PdfReader(file_path)

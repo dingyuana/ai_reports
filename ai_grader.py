@@ -1,8 +1,30 @@
+"""
+文件名: ai_grader.py
+作用: 实现AI批阅功能，与AI服务器通信，发送报告内容和批阅标准，接收评分和评语
+实现路径:
+    1. 初始化AI批阅器，配置API连接参数
+    2. 实现与AI服务的通信接口
+    3. 处理AI返回的评分和评语
+功能:
+    - 连接外部AI服务（如豆包大模型）
+    - 发送报告内容和批阅标准
+    - 接收AI生成的评语
+    - 从评语中提取分数
+使用方式:
+    - 在grading_system.py中被实例化
+    - 通过grade_report方法发送报告内容进行批阅
+    - 返回包含分数和评语的字典
+依赖:
+    - requests: 用于HTTP通信
+    - re: 用于正则表达式提取分数
+"""
+
 from typing import Dict, Any
 import requests
 import logging
 import re
 
+# 配置日志记录器
 logger = logging.getLogger(__name__)
 
 

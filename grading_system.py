@@ -1,3 +1,34 @@
+"""
+文件名: grading_system.py
+作用: 实验报告自动批阅系统的核心控制类，协调各个组件完成报告的自动批阅
+实现路径:
+    1. 初始化系统组件
+       - 文件管理器（FileManager）：处理文件的读取和保存
+       - AI批阅器（AIGrader）：进行智能评分
+       - 文档处理器（DocumentProcessor）：处理不同格式的文档
+    2. 设置批阅标准
+    3. 批量处理学生报告
+       - 读取报告文件
+       - 提取文本内容
+       - 进行AI评分
+       - 添加评语和分数
+       - 生成批阅后的文档
+    4. 生成评分汇总
+功能:
+    - 管理和协调整个批阅流程
+    - 支持多种文件格式（PDF、DOC、DOCX）
+    - 自动添加评语、分数和对号标注
+    - 生成评分汇总Excel表格
+使用方式:
+    1. 创建GradingSystem实例，提供必要的配置
+    2. 设置批阅标准
+    3. 调用process_all_reports()进行批量处理
+依赖:
+    - file_manager.py: 文件管理
+    - ai_grader.py: AI评分
+    - document_processor.py: 文档处理
+"""
+
 from typing import List, Dict, Any
 import logging
 import os
@@ -5,6 +36,7 @@ from file_manager import FileManager
 from ai_grader import AIGrader
 from document_processor import PDFProcessor, WordProcessor
 
+# 配置日志记录器
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +57,56 @@ class GradingSystem:
         """设置批阅标准"""
         self.grading_criteria = criteria
         logger.info("批阅标准已设置")
+        
+    def annotate_report(self, file_path: str, output_path: str, annotations: List[Dict[str, Any]]) -> bool:
+        """在报告上添加批注
+        
+        Args:
+            file_path: 原始报告文件路径
+            output_path: 输出文件路径
+            annotations: 批注列表，每个批注包含页码、位置和内容
+            
+        Returns:
+            bool: 处理是否成功
+        """
+        try:
+            # 获取文件扩展名
+            ext = os.path.splitext(file_path)[1].lower()
+            
+            # 选择合适的处理器
+            if ext == '.pdf':
+                processor = PDFProcessor()
+                return processor.add_annotations(file_path, annotations, output_path)
+            else:
+                logger.error(f"不支持的文件类型: {ext}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"添加批注时出错: {str(e)}", exc_info=True)
+            return False
+
+    def get_all_reports(self, directory: str = None) -> List[Dict[str, str]]:
+        """获取指定目录下的所有报告列表
+        
+        Args:
+            directory: 可选的子目录名称，如果提供则在该子目录下搜索报告
+            
+        Returns:
+            List[Dict[str, str]]: 报告文件信息列表，每个报告包含文件名、路径和状态
+        """
+        try:
+            reports = self.file_manager.get_student_reports(directory)
+            return [
+                {
+                    "filename": os.path.basename(report_path),
+                    "path": report_path,
+                    "status": "未处理"  # 默认状态
+                }
+                for report_path in reports
+            ]
+        except Exception as e:
+            logger.error(f"获取报告列表失败: {e}", exc_info=True)
+            raise
 
     def process_all_reports(self) -> str:
         """处理所有学生报告"""
