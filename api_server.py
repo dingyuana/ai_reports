@@ -257,6 +257,7 @@ async def annotate_report(scan_model: AnnotateScanModel):
                     else:
                         user_name = filename.split('.')[0]
                         student_id = user_name  # 假设学号是文件名前缀
+                        class_name  = user_name # 假设姓名是文件名前缀
                     print(f"班级: {class_name}, 学号: {student_id}, 姓名: {user_name}")
                     qualified_csv_path = os.path.join(output_subdir, "合格报告分数.csv")
                     file_exists = os.path.exists(qualified_csv_path)
@@ -273,7 +274,6 @@ async def annotate_report(scan_model: AnnotateScanModel):
                             '姓名': user_name,
                             '分数': score
                         })
-
                     # 如果是PDF文件，调用 generate_graded_pdf 函数
                     if ext == '.pdf':
                         graded_reports_dir = os.path.join(GRADED_DIR, decoded_directory)

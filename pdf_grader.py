@@ -43,12 +43,7 @@ def grade_student_reports(sub_dir=None):
             return
 
         print(f"开始处理子目录: {sub_dir}")
-        # 只处理指定的单个学生文件
-        student_file = f"{班级}-{学号}-{姓名}-实验报告(批阅版).pdf"
-        if os.path.exists(os.path.join(target_dir, student_file)):
-            process_directory(target_dir, student_reports_base, output_base, graded_reports_base, specific_file=student_file)
-        else:
-            print(f"错误：未找到学生文件 {student_file}")
+        process_directory(target_dir, student_reports_base, output_base, graded_reports_base)
     else:
         # 处理所有子目录
         print("开始处理所有学生报告...")
@@ -87,7 +82,7 @@ def process_directory(target_dir, student_reports_base, output_base, graded_repo
 
         # 构建输出文件路径 - 统一输出为PDF格式
         output_dir = os.path.join(graded_reports_base, rel_path)
-        output_filename = os.path.splitext(filename)[0] + '_graded.pdf'
+        output_filename = os.path.splitext(filename)[0] + '.pdf'
         output_path = os.path.join(output_dir, output_filename)
 
         # 确保输出目录存在
