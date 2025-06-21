@@ -44,3 +44,9 @@ student_reports/
 # System
 .DS_Store
 Thumbs.db
+
+.doc
+.docx
+.pdf
+.xlsx
+.json
