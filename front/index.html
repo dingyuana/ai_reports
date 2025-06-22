@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实验报告自动批阅系统</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>实验报告自动批阅系统</h1>
+            <p>管理报告、设置标准并查看结果</p>
+        </header>
+
+        <main class="main-grid">
+            <!-- 左侧面板: 待批阅报告 -->
+            <div id="student-reports-panel" class="panel">
+                <h2>待批阅报告</h2>
+                <div id="directory-list" class="directory-list">
+                    <!-- 待批阅报告树将由JS动态加载 -->
+                </div>
+                 <p id="dir-loading" class="loading-message">目录加载中...</p>
+            </div>
+
+            <!-- 中间面板: 批阅要求 -->
+            <div id="criteria-panel" class="panel">
+                <h2>批阅要求</h2>
+                <form id="criteria-form">
+                    <textarea id="criteria-input" name="criteria" rows="15" placeholder="在此处输入评分标准..."></textarea>
+                    <button type="submit" class="button">保存标准</button>
+                    <p id="criteria-status" class="status-message"></p>
+                </form>
+            </div>
+
+            <!-- 右侧面板: 已批阅报告 -->
+            <div id="graded-reports-panel" class="panel">
+                <h2>已批阅报告</h2>
+                <div id="graded-list" class="directory-list">
+                    <!-- 已批阅报告树将由JS动态加载 -->
+                </div>
+                <p id="graded-loading" class="loading-message">目录加载中...</p>
+            </div>
+        </main>
+        
+        <div id="results-container" class="results-container hidden">
+            <div class="results-content">
+                <button class="close-results" aria-label="关闭">&times;</button>
+                <div class="results-header">
+                    <h2 id="results-title">扫描结果</h2>
+                    <a id="csv-download-link" class="button hidden" download>下载不合格报告 (CSV)</a>
+                </div>
+                <div id="report-list">
+                    <!-- 报告评估结果将由JS动态加载 -->
+                </div>
+                 <p id="report-loading" class="loading-message hidden">报告处理中，请耐心等待...</p>
+            </div>
+        </div>
+
+        <footer>
+            <p>AI驱动的智能批阅解决方案</p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html> 

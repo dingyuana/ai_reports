@@ -12,6 +12,7 @@ from volcenginesdkarkruntime import Ark
 from config import API_CONFIG
 # 从 pdf_grader.py 导入 generate_graded_pdf 函数
 from pdf_grader import grade_student_reports
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
 
@@ -29,6 +30,17 @@ REPORTS_DIR = "reports"  # 报告存储目录
 OUTPUT_DIR = "output"  # 输出目录
 GRADED_DIR = "graded_reports"  # 输出目录
 
+# 全局变量，用于在内存中存储评分标准
+# 在实际生产环境中，可能会使用数据库或缓存
+GRADING_CRITERIA = """
+1. 内容完整性（是否包含实验目的、步骤、结果等必要部分）
+2. 格式规范性（标题、段落、图表等是否规范）
+3. 内容相关性（内容是否与实验主题相关）
+4. 原创性（是否存在抄袭嫌疑）
+5. 不要求对图片和表格等非文本内容考核
+6. 成绩范围：60-95
+"""
+
 # 创建评分系统实例
 grading_system = GradingSystem(REPORTS_DIR, OUTPUT_DIR, API_CONFIG)
 
@@ -37,6 +49,50 @@ ark_api_key = os.getenv('ARK_API_KEY')
 if not ark_api_key:
     raise ValueError("ARK_API_KEY environment variable is not set")
 ark = Ark(api_key=ark_api_key)
+
+
+@app.get("/api/reports/")
+async def get_report_directories():
+    """获取 student_reports 目录下的所有子目录及其文件列表"""
+    base_path = "student_reports"
+    try:
+        if not os.path.exists(base_path) or not os.path.isdir(base_path):
+            return []
+        
+        result = []
+        for dir_name in os.listdir(base_path):
+            dir_path = os.path.join(base_path, dir_name)
+            if os.path.isdir(dir_path):
+                files = [
+                    f for f in os.listdir(dir_path)
+                    if os.path.isfile(os.path.join(dir_path, f))
+                ]
+                result.append({"name": dir_name, "files": files})
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取报告目录时出错: {str(e)}")
+
+
+@app.get("/api/graded-reports/")
+async def get_graded_reports():
+    """获取 graded_reports 目录下的内容（子目录和文件）"""
+    base_path = "graded_reports"
+    try:
+        if not os.path.exists(base_path) or not os.path.isdir(base_path):
+            return []
+            
+        result = []
+        for dir_name in os.listdir(base_path):
+            dir_path = os.path.join(base_path, dir_name)
+            if os.path.isdir(dir_path):
+                files = [
+                    f for f in os.listdir(dir_path)
+                    if os.path.isfile(os.path.join(dir_path, f))
+                ]
+                result.append({"name": dir_name, "files": files})
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取已评分报告时出错: {str(e)}")
 
 
 class AnnotateScanModel(BaseModel):
@@ -148,13 +204,10 @@ async def annotate_report(scan_model: AnnotateScanModel):
 
                 # 使用ARK大模型评估报告质量
                 prompt = f"""
-                请评估以下实验报告的质量，考虑以下方面：
-                1. 内容完整性（是否包含实验目的、步骤、结果等必要部分）
-                2. 格式规范性（标题、段落、图表等是否规范）
-                3. 内容相关性（内容是否与实验主题相关）
-                4. 原创性（是否存在抄袭嫌疑）
-                5. 不要求对图片和表格等非文本内容考核
-                6. 成绩范围：60-95
+                请根据以下标准评估实验报告的质量：
+                ---
+                {GRADING_CRITERIA}
+                ---
 
                 报告内容：
                 {content[:4000]}  # 限制内容长度以避免超过模型限制
@@ -335,6 +388,30 @@ async def annotate_report(scan_model: AnnotateScanModel):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"处理报告时出错: {str(e)}")
+
+
+class CriteriaModel(BaseModel):
+    criteria: str
+
+
+@app.post("/api/criteria")
+async def set_criteria(data: CriteriaModel):
+    """设置全局的评分标准"""
+    global GRADING_CRITERIA
+    GRADING_CRITERIA = data.criteria
+    print(f"新的评分标准已设置: {GRADING_CRITERIA}")
+    return {"message": "评分标准已成功更新"}
+
+
+@app.get("/api/criteria")
+async def get_criteria():
+    """获取当前的评分标准"""
+    return {"criteria": GRADING_CRITERIA}
+
+
+# 挂载静态文件目录
+# 注意：这必须在所有API路由之后进行，以确保API路由优先匹配
+app.mount("/", StaticFiles(directory="front", html=True), name="front")
 
 
 if __name__ == "__main__":

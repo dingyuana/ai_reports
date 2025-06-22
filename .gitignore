@@ -36,6 +36,8 @@ ENV/
 # Project specific
 graded_reports/
 student_reports/
+output/
+reports/
 *.log
 *.xlsx
 *.docx
