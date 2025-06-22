@@ -1,18 +1,29 @@
 document.addEventListener('DOMContentLoaded', () => {
     const API_BASE_URL = 'http://127.0.0.1:8000';
 
+    let selectedDirectory = null;
+
     // 左侧面板元素
+    const studentReportsPanel = document.getElementById('student-reports-panel');
     const dirLoadingEl = document.getElementById('dir-loading');
     const directoryListEl = document.getElementById('directory-list');
+    const uploadBtn = document.getElementById('upload-btn');
+    const fileInput = document.getElementById('file-input');
     
     // 中间面板元素
     const criteriaFormEl = document.getElementById('criteria-form');
     const criteriaInputEl = document.getElementById('criteria-input');
     const criteriaStatusEl = document.getElementById('criteria-status');
+    const addMarkingsCheckbox = document.getElementById('option-add-markings');
+    const aiReviewCheckbox = document.getElementById('option-ai-review');
+    const autoGradingCheckbox = document.getElementById('option-auto-grading');
 
     // 右侧面板元素
     const gradedLoadingEl = document.getElementById('graded-loading');
     const gradedListEl = document.getElementById('graded-list');
+
+    // 提交按钮
+    const submitGradingBtn = document.getElementById('submit-grading-btn');
 
     // 结果面板元素
     const resultsContainerEl = document.getElementById('results-container');
@@ -23,14 +34,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     /**
      * 通用函数：创建文件/目录树
-     * @param {Array} items - 数据项数组
-     * @param {HTMLElement} container - 容纳树的DOM元素
-     * @param {boolean} showScanButton - 是否显示扫描按钮
      */
-    function createTreeView(items, container, showScanButton) {
+    function createTreeView(items, container, isStudentReports) {
         container.innerHTML = '';
         if (items.length === 0) {
-            container.innerHTML = '<p>未找到任何项目。</p>';
+            container.innerHTML = '<p style="padding: 1rem; text-align: center; color: #888;">未找到任何项目。</p>';
             return;
         }
 
@@ -39,13 +47,22 @@ document.addEventListener('DOMContentLoaded', () => {
         items.forEach(item => {
             const itemLi = document.createElement('li');
             itemLi.className = 'tree-item is-directory';
+            itemLi.dataset.directoryName = item.name; // 将目录名存储在li元素上
 
             const itemRow = document.createElement('div');
             itemRow.className = 'tree-row';
+            const fileCount = item.files ? item.files.length : 0;
+            
+            const downloadButtonHtml = !isStudentReports
+                ? `<button class="button small-button download-btn" data-download-dir="${item.name}">下载</button>`
+                : '';
+
             itemRow.innerHTML = `
                 <span class="caret"></span>
                 <span class="icon folder-icon"></span>
-                <span class="name" data-directory-name="${item.name}">${item.name}</span>
+                <span class="name">${item.name}</span>
+                <span class="file-count">(${fileCount}个)</span>
+                ${downloadButtonHtml}
             `;
 
             const fileUl = document.createElement('ul');
@@ -55,10 +72,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 item.files.forEach(file => {
                     const fileLi = document.createElement('li');
                     fileLi.className = 'tree-item is-file';
-                    // 为已评分文件添加下载链接
-                    const fileHtml = showScanButton 
-                        ? `<span class="name">${file}</span>` 
-                        : `<a href="${API_BASE_URL}/graded_reports/${item.name}/${file}" target="_blank" class="name">${file}</a>`;
+                    
+                    const fileHtml = !isStudentReports 
+                        ? `<a href="${API_BASE_URL}/graded_reports/${item.name}/${file}" target="_blank" class="name">${file}</a>`
+                        : `<span class="name">${file}</span>`;
 
                     fileLi.innerHTML = `
                         <div class="tree-row">
@@ -71,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 const emptyLi = document.createElement('li');
                 emptyLi.className = 'tree-item is-empty';
-                emptyLi.textContent = '此目录为空';
+                emptyLi.innerHTML = `<div class="tree-row" style="cursor: default; color: #aaa;">此目录为空</div>`;
                 fileUl.appendChild(emptyLi);
             }
             
@@ -87,6 +104,7 @@ document.addEventListener('DOMContentLoaded', () => {
      */
     async function fetchAndRenderStudentReports() {
         dirLoadingEl.classList.remove('hidden');
+        directoryListEl.innerHTML = '';
         try {
             const response = await fetch(`${API_BASE_URL}/api/reports/`);
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -105,6 +123,7 @@ document.addEventListener('DOMContentLoaded', () => {
      */
     async function fetchAndRenderGradedReports() {
         gradedLoadingEl.classList.remove('hidden');
+        gradedListEl.innerHTML = '';
         try {
             const response = await fetch(`${API_BASE_URL}/api/graded-reports/`);
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -163,26 +182,70 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     /**
-     * 调用API扫描指定目录
-     * @param {string} directoryName - 要扫描的目录名称
+     * 处理文件上传
      */
-    async function scanDirectory(directoryName) {
-        // UI重置和加载状态
+    async function handleFileUpload() {
+        const file = fileInput.files[0];
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const originalBtnText = uploadBtn.textContent;
+        uploadBtn.textContent = '上传中...';
+        uploadBtn.disabled = true;
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/upload`, {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || '上传失败');
+            }
+
+            await fetchAndRenderStudentReports();
+        } catch (error) {
+            alert(`上传出错: ${error.message}`);
+        } finally {
+            uploadBtn.textContent = '上传文件';
+            uploadBtn.disabled = false;
+            fileInput.value = '';
+        }
+    }
+    
+    /**
+     * 提交批阅任务
+     */
+    async function submitGrading() {
+        if (!selectedDirectory) {
+            alert("请先在左侧选择一个要批阅的目录。");
+            return;
+        }
+
         resultsContainerEl.classList.remove('hidden');
-        resultsTitleEl.textContent = `扫描结果: ${directoryName}`;
+        resultsTitleEl.textContent = `批阅结果: ${selectedDirectory}`;
         reportListEl.innerHTML = '';
         reportLoadingEl.classList.remove('hidden');
         csvDownloadLinkEl.classList.add('hidden');
         
-        // 禁用所有按钮
-        document.querySelectorAll('.directory-list button').forEach(b => b.disabled = true);
+        submitGradingBtn.textContent = '正在批阅...';
+        submitGradingBtn.disabled = true;
+
+        const payload = {
+            directory: selectedDirectory,
+            add_markings: addMarkingsCheckbox.checked,
+            ai_review: aiReviewCheckbox.checked,
+            auto_grading: autoGradingCheckbox.checked,
+        };
 
         try {
-            const encodedDirectory = encodeURIComponent(directoryName);
             const response = await fetch(`${API_BASE_URL}/api/annotate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ directory: encodedDirectory }),
+                body: JSON.stringify(payload),
             });
 
             if (!response.ok) {
@@ -192,9 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await response.json();
             
             renderReportResults(result.documents);
-            
-            // 新增：扫描后刷新已评分列表
-            fetchAndRenderGradedReports();
+            await fetchAndRenderGradedReports();
 
             if (result.failed_count > 0 && result.csv_file) {
                 csvDownloadLinkEl.href = `${API_BASE_URL}/${result.csv_file}`;
@@ -202,18 +263,18 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
         } catch (error) {
-            console.error('扫描目录时出错:', error);
-            reportListEl.innerHTML = `<p class="error">扫描失败: ${error.message}</p>`;
+            console.error('批阅时出错:', error);
+            reportListEl.innerHTML = `<p class="error">批阅失败: ${error.message}</p>`;
         } finally {
             reportLoadingEl.classList.add('hidden');
-            // 重新启用所有按钮
-            document.querySelectorAll('.directory-list button').forEach(b => b.disabled = false);
+            submitGradingBtn.textContent = '开始批阅选定目录';
+            submitGradingBtn.disabled = false;
         }
     }
 
+
     /**
      * 渲染报告评估结果
-     * @param {Array} reports - 报告对象数组
      */
     function renderReportResults(reports) {
         reportListEl.innerHTML = '';
@@ -246,29 +307,99 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 事件委托：处理目录展开/折叠和按钮点击
+    /**
+     * 下载已批阅目录
+     */
+    async function downloadGradedDirectory(directoryName) {
+        const button = document.querySelector(`.download-btn[data-download-dir="${directoryName}"]`);
+        const originalText = button.innerHTML;
+        button.innerHTML = '打包中...';
+        button.disabled = true;
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/download-graded?directory=${encodeURIComponent(directoryName)}`);
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || '下载失败');
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `${directoryName}_graded.zip`; 
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+
+        } catch (error) {
+            alert(`下载失败: ${error.message}`);
+        } finally {
+            button.innerHTML = '下载';
+            button.disabled = false;
+        }
+    }
+
+    // --- 全局事件委托 ---
     document.body.addEventListener('click', (event) => {
         const target = event.target;
+        const row = target.closest('.tree-row');
 
-        // 处理目录名点击（扫描）
-        if (target.classList.contains('name') && target.dataset.directoryName) {
-            scanDirectory(target.dataset.directoryName);
-            return;
+        // 关闭结果弹窗
+        if (target.classList.contains('close-results')) {
+            resultsContainerEl.classList.add('hidden');
         }
 
-        // 处理目录展开/折叠 (点击caret)
-        if (target.classList.contains('caret')) {
-            const row = target.closest('.tree-row');
-            if (row && row.parentElement.classList.contains('is-directory')) {
-                row.parentElement.classList.toggle('expanded');
+        // 点击左侧面板中的目录行
+        if (studentReportsPanel.contains(target) && row) {
+            const li = row.parentElement;
+            if (li.classList.contains('is-directory')) {
+                // 切换展开/折叠
+                li.classList.toggle('expanded');
+                
+                // 设置选中状态
+                if (selectedDirectory !== li.dataset.directoryName) {
+                     // 移除旧的选中
+                    const currentSelected = studentReportsPanel.querySelector('.tree-item.selected');
+                    if (currentSelected) {
+                        currentSelected.classList.remove('selected');
+                    }
+                    // 添加新的选中
+                    li.classList.add('selected');
+                    selectedDirectory = li.dataset.directoryName;
+                } else {
+                    // 如果再次点击已选中的，则取消选中
+                    li.classList.remove('selected');
+                    selectedDirectory = null;
+                }
             }
+        }
+        
+        // 点击右侧面板中的目录行 (仅展开/折叠)
+        if (gradedListEl.contains(target) && row) {
+            const li = row.parentElement;
+            if (li.classList.contains('is-directory')) {
+                li.classList.toggle('expanded');
+            }
+        }
+
+        // 点击下载按钮
+        if (target.classList.contains('download-btn')) {
+            const dirName = target.dataset.downloadDir;
+            downloadGradedDirectory(dirName);
         }
     });
 
-    // 表单提交事件
+    // --- 独立事件监听 ---
+    uploadBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', handleFileUpload);
     criteriaFormEl.addEventListener('submit', handleCriteriaSubmit);
+    submitGradingBtn.addEventListener('click', submitGrading);
 
-    // 初始加载
+    // --- 初始加载 ---
     fetchAndRenderStudentReports();
     fetchAndRenderGradedReports();
     fetchAndSetCriteria();

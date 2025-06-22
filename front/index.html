@@ -10,7 +10,6 @@
     <div class="container">
         <header>
             <h1>实验报告自动批阅系统</h1>
-            <p>管理报告、设置标准并查看结果</p>
         </header>
 
         <main class="main-grid">
@@ -24,26 +23,47 @@
                 <div id="directory-list" class="directory-list">
                     <!-- 待批阅报告树将由JS动态加载 -->
                 </div>
-                 <p id="dir-loading" class="loading-message">目录加载中...</p>
+                <p id="dir-loading" class="loading-message hidden">目录加载中...</p>
             </div>
 
             <!-- 中间面板: 批阅要求 -->
             <div id="criteria-panel" class="panel">
-                <h2>批阅要求</h2>
+                <div class="panel-header">
+                    <h2>批阅要求</h2>
+                    <div class="options-container">
+                        <label class="checkbox-label" title="在批阅后的PDF上添加对号等标记">
+                            <input type="checkbox" id="option-add-markings" checked>
+                            <span>增加标志</span>
+                        </label>
+                        <label class="checkbox-label" title="调用AI模型生成评语">
+                            <input type="checkbox" id="option-ai-review" checked>
+                            <span>AI审核</span>
+                        </label>
+                        <label class="checkbox-label" title="调用AI模型生成分数">
+                            <input type="checkbox" id="option-auto-grading" checked>
+                            <span>自动批分</span>
+                        </label>
+                    </div>
+                    <button type="submit" form="criteria-form" class="button small-button">保存标准</button>
+                </div>
                 <form id="criteria-form">
                     <textarea id="criteria-input" name="criteria" rows="15" placeholder="在此处输入评分标准..."></textarea>
-                    <button type="submit" class="button">保存标准</button>
                     <p id="criteria-status" class="status-message"></p>
                 </form>
+                <div class="submit-container">
+                    <button id="submit-grading-btn" class="button large-button">开始批阅选定目录</button>
+                </div>
             </div>
 
             <!-- 右侧面板: 已批阅报告 -->
             <div id="graded-reports-panel" class="panel">
-                <h2>已批阅报告</h2>
+                <div class="panel-header">
+                    <h2>已批阅报告</h2>
+                </div>
                 <div id="graded-list" class="directory-list">
                     <!-- 已批阅报告树将由JS动态加载 -->
                 </div>
-                <p id="graded-loading" class="loading-message">目录加载中...</p>
+                <p id="graded-loading" class="loading-message hidden">目录加载中...</p>
             </div>
         </main>
         

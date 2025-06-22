@@ -3,7 +3,7 @@ import json
 import csv
 from datetime import datetime
 from urllib.parse import unquote
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -13,6 +13,10 @@ from config import API_CONFIG
 # 从 pdf_grader.py 导入 generate_graded_pdf 函数
 from pdf_grader import grade_student_reports
 from fastapi.staticfiles import StaticFiles
+import shutil
+import zipfile
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 app = FastAPI()
 
@@ -95,8 +99,36 @@ async def get_graded_reports():
         raise HTTPException(status_code=500, detail=f"获取已评分报告时出错: {str(e)}")
 
 
+@app.get("/api/download-graded")
+async def download_graded_directory(directory: str):
+    """压缩指定的已批阅目录并提供下载"""
+    target_dir = os.path.join("graded_reports", directory)
+    if not os.path.isdir(target_dir):
+        raise HTTPException(status_code=404, detail="目录未找到")
+
+    # 临时zip文件路径
+    temp_dir = "temp"
+    os.makedirs(temp_dir, exist_ok=True)
+    # make_archive会自动添加.zip后缀，所以我们提供基础名
+    base_zip_name = os.path.join(temp_dir, directory)
+    zip_path = shutil.make_archive(base_zip_name, 'zip', target_dir)
+
+    def cleanup():
+        os.remove(zip_path)
+
+    return FileResponse(
+        path=zip_path,
+        filename=f"{directory}_graded.zip",
+        media_type='application/zip',
+        background=BackgroundTask(cleanup)
+    )
+
+
 class AnnotateScanModel(BaseModel):
     directory: str
+    add_markings: bool
+    ai_review: bool
+    auto_grading: bool
 
 
 import asyncio
@@ -170,6 +202,9 @@ async def annotate_report(scan_model: AnnotateScanModel):
     """
     批注报告接口
     """
+    # 打印接收到的新参数以供调试
+    print(f"接收到批阅请求: 目录='{scan_model.directory}', 增加标志={scan_model.add_markings}, AI审核={scan_model.ai_review}, 自动批分={scan_model.auto_grading}")
+    
     try:
         # 解码目录名称
         decoded_directory = unquote(scan_model.directory)
@@ -407,6 +442,44 @@ async def set_criteria(data: CriteriaModel):
 async def get_criteria():
     """获取当前的评分标准"""
     return {"criteria": GRADING_CRITERIA}
+
+
+@app.post("/api/upload")
+async def upload_zip_file(file: UploadFile = File(...)):
+    """接收ZIP压缩文件，解压到student_reports目录"""
+    if not file.filename.endswith('.zip'):
+        raise HTTPException(status_code=400, detail="只支持上传ZIP格式的压缩文件")
+
+    # 基于文件名创建目录
+    dir_name = os.path.splitext(file.filename)[0]
+    extract_path = os.path.join("student_reports", dir_name)
+    os.makedirs(extract_path, exist_ok=True)
+
+    # 临时保存上传的zip文件
+    temp_zip_path = os.path.join("temp", file.filename)
+    os.makedirs("temp", exist_ok=True)
+    
+    try:
+        with open(temp_zip_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # 解压文件
+        with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
+            zip_ref.extractall(extract_path)
+
+    except Exception as e:
+        # 清理
+        shutil.rmtree(extract_path, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"文件处理失败: {str(e)}")
+    finally:
+        # 清理临时文件
+        if os.path.exists(temp_zip_path):
+            os.remove(temp_zip_path)
+        if os.path.exists("temp") and not os.listdir("temp"):
+            os.rmdir("temp")
+        await file.close()
+
+    return {"message": f"文件 '{file.filename}' 已成功上传并解压到 '{dir_name}' 目录"}
 
 
 # 挂载静态文件目录
