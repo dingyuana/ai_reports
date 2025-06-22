@@ -16,7 +16,11 @@
         <main class="main-grid">
             <!-- 左侧面板: 待批阅报告 -->
             <div id="student-reports-panel" class="panel">
-                <h2>待批阅报告</h2>
+                <div class="panel-header">
+                    <h2>待批阅报告</h2>
+                    <button id="upload-btn" class="button small-button">上传文件</button>
+                    <input type="file" id="file-input" accept=".zip" hidden>
+                </div>
                 <div id="directory-list" class="directory-list">
                     <!-- 待批阅报告树将由JS动态加载 -->
                 </div>
