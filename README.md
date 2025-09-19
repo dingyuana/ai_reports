@@ -133,9 +133,72 @@ sequenceDiagram
 - 建议在处理大量报告时使用批量处理功能
 - 评分结果保存在graded_reports目录下
 
+## Docker 部署
+
+### 快速开始
+
+1. **克隆项目并进入目录**
+```bash
+git clone <repository-url>
+cd grading-system
+```
+
+2. **配置环境变量**
+```bash
+cp .env.example .env
+# 编辑 .env 文件，配置 AI_API_KEY 和 ARK_API_KEY
+```
+
+3. **一键部署**
+```bash
+# 基本部署
+./scripts/quick-start.sh
+
+# 启用 SSL 和监控
+./scripts/quick-start.sh --ssl --monitoring
+```
+
+4. **访问应用**
+- Web 界面: http://localhost
+- 健康检查: http://localhost/health
+
+### 详细部署指南
+
+请参阅 [DEPLOYMENT.md](DEPLOYMENT.md) 获取完整的部署文档，包括：
+- 系统要求和环境准备
+- 详细配置说明
+- SSL/HTTPS 配置
+- 数据备份和恢复
+- 监控和日志管理
+- 故障排除指南
+
+### 常用命令
+
+```bash
+# 查看服务状态
+docker-compose ps
+
+# 查看日志
+docker-compose logs -f
+
+# 健康检查
+./scripts/health-check.sh all
+
+# 备份数据
+./scripts/backup.sh
+
+# 更新系统
+./scripts/update.sh
+
+# 停止服务
+docker-compose down
+```
+
 ## 未来改进计划
 1. 添加更多文档格式支持
 2. 优化AI评分算法
 3. 增加用户界面
 4. 添加批注功能
 5. 支持自定义评分模板
+6. Kubernetes 部署支持
+7. 微服务架构重构

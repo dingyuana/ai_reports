@@ -1,0 +1,19 @@
+version: '3.8'
+
+# SSL/HTTPS configuration override for docker-compose
+# Use this file in addition to the main docker-compose.yml for HTTPS support
+
+services:
+  nginx:
+    volumes:
+      # Override default configuration with SSL configuration
+      - ./nginx/ssl.conf:/etc/nginx/conf.d/default.conf:ro
+      # Mount SSL certificates
+      - ./ssl:/etc/nginx/ssl:ro
+    ports:
+      # Map both HTTP and HTTPS ports
+      - "80:80"
+      - "443:443"
+    environment:
+      # Enable SSL mode
+      - SSL_ENABLED=true

@@ -10,8 +10,12 @@ from typing import List, Optional
 from grading_system import GradingSystem
 from volcenginesdkarkruntime import Ark
 from config import API_CONFIG
-# 从 pdf_grader.py 导入 generate_graded_pdf 函数
+# Import temporary file manager
+from utils.temp_file_manager import temp_manager, temp_file, temp_dir
+# 导入PDF处理相关函数
 from pdf_grader import grade_student_reports
+from pdf_chinese_helper import register_chinese_fonts, create_chinese_pdf
+from grade_single_student import grade_single_student
 from fastapi.staticfiles import StaticFiles
 import shutil
 import zipfile
@@ -455,29 +459,23 @@ async def upload_zip_file(file: UploadFile = File(...)):
     extract_path = os.path.join("student_reports", dir_name)
     os.makedirs(extract_path, exist_ok=True)
 
-    # 临时保存上传的zip文件
-    temp_zip_path = os.path.join("temp", file.filename)
-    os.makedirs("temp", exist_ok=True)
-    
-    try:
-        with open(temp_zip_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+    # 使用临时文件管理器创建临时文件
+    with temp_file(suffix='.zip', prefix='upload_') as temp_zip_path:
+        try:
+            # 保存上传的文件到临时位置
+            with open(temp_zip_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
 
-        # 解压文件
-        with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
-            zip_ref.extractall(extract_path)
+            # 解压文件
+            with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_path)
 
-    except Exception as e:
-        # 清理
-        shutil.rmtree(extract_path, ignore_errors=True)
-        raise HTTPException(status_code=500, detail=f"文件处理失败: {str(e)}")
-    finally:
-        # 清理临时文件
-        if os.path.exists(temp_zip_path):
-            os.remove(temp_zip_path)
-        if os.path.exists("temp") and not os.listdir("temp"):
-            os.rmdir("temp")
-        await file.close()
+        except Exception as e:
+            # 清理
+            shutil.rmtree(extract_path, ignore_errors=True)
+            raise HTTPException(status_code=500, detail=f"文件处理失败: {str(e)}")
+        finally:
+            await file.close()
 
     return {"message": f"文件 '{file.filename}' 已成功上传并解压到 '{dir_name}' 目录"}
 
@@ -487,7 +485,136 @@ async def upload_zip_file(file: UploadFile = File(...)):
 app.mount("/", StaticFiles(directory="front", html=True), name="front")
 
 
+class SingleReportModel(BaseModel):
+    file_path: str
+    score: Optional[float] = None
+    comments: Optional[str] = None
+    output_path: Optional[str] = None
+
+
+@app.post("/api/grade_single_report")
+async def grade_single_report(data: SingleReportModel):
+    """批阅单个学生报告"""
+    try:
+        # 确保文件存在
+        if not os.path.exists(data.file_path):
+            raise HTTPException(status_code=404, detail="文件不存在")
+        
+        # 调用 grade_single_student 函数
+        result_path = grade_single_student(
+            data.file_path,
+            data.output_path,
+            data.score,
+            data.comments
+        )
+        
+        if result_path:
+            return {
+                "status": "success",
+                "message": "报告批阅完成",
+                "output_path": result_path
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "报告批阅失败"
+            }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+@app.get("/api/temp/usage")
+async def get_temp_usage():
+    """获取临时文件使用情况"""
+    try:
+        usage = temp_manager.get_temp_usage()
+        return {
+            "status": "success",
+            "usage": usage
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取临时文件使用情况失败: {str(e)}")
+
+@app.post("/api/temp/cleanup")
+async def cleanup_temp_files():
+    """手动清理临时文件"""
+    try:
+        temp_manager.cleanup_old_files()
+        usage_after = temp_manager.get_temp_usage()
+        return {
+            "status": "success",
+            "message": "临时文件清理完成",
+            "usage_after_cleanup": usage_after
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"清理临时文件失败: {str(e)}")
+
+# Health check endpoints
+from utils.health_check import health_checker
+
+@app.get("/health")
+async def health_check():
+    """Basic health check endpoint"""
+    return {"status": "healthy", "message": "Service is running"}
+
+@app.get("/api/health")
+async def detailed_health_check():
+    """Detailed health check with system information"""
+    try:
+        health_status = health_checker.check_system_health()
+        
+        # Return appropriate HTTP status code
+        status_code = 200 if health_status["status"] == "healthy" else 503
+        
+        return health_status
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
+
+@app.get("/api/health/summary")
+async def health_summary():
+    """Get health check summary"""
+    try:
+        summary = health_checker.get_health_summary()
+        return {
+            "status": "success",
+            "summary": summary
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get health summary: {str(e)}")
+
+@app.get("/api/health/live")
+async def liveness_probe():
+    """Kubernetes-style liveness probe"""
+    return {"status": "alive"}
+
+@app.get("/api/health/ready")
+async def readiness_probe():
+    """Kubernetes-style readiness probe"""
+    try:
+        # Quick checks for readiness
+        health_status = health_checker.check_system_health()
+        
+        # Check critical components
+        critical_checks = ["directories", "ai_service"]
+        ready = True
+        
+        for check_name in critical_checks:
+            if check_name in health_status["checks"]:
+                if not health_status["checks"][check_name].get("healthy", False):
+                    ready = False
+                    break
+        
+        if ready:
+            return {"status": "ready"}
+        else:
+            raise HTTPException(status_code=503, detail="Service not ready")
+            
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Readiness check failed: {str(e)}")

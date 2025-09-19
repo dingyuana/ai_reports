@@ -57,13 +57,24 @@ def grade_student_reports(sub_dir=None):
         print("\n所有报告处理完成！")
 
 
-def process_directory(target_dir, student_reports_base, output_base, graded_reports_base):
-    """处理指定目录中的所有文件"""
+def process_directory(target_dir, student_reports_base, output_base, graded_reports_base, specific_file=None):
+    """
+    处理指定目录中的文件
+    
+    参数:
+    specific_file -- 如果指定，则只处理这个特定的文件
+    """
     # 获取相对路径（保留原始子目录结构）
     rel_path = os.path.relpath(target_dir, student_reports_base)
 
-    # 遍历目录中的文件
-    for filename in os.listdir(target_dir):
+    # 确定要处理的文件列表
+    if specific_file:
+        files_to_process = [specific_file] if os.path.exists(os.path.join(target_dir, specific_file)) else []
+    else:
+        files_to_process = os.listdir(target_dir)
+
+    # 遍历要处理的文件
+    for filename in files_to_process:
         file_path = os.path.join(target_dir, filename)
 
         if not os.path.isfile(file_path):
