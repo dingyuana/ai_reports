@@ -13,8 +13,12 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER
-import comtypes.client
-import pythoncom
+try:
+    import comtypes.client
+    import pythoncom
+    COMTYPES_AVAILABLE = True
+except ImportError:
+    COMTYPES_AVAILABLE = False
 from PIL import Image
 from reportlab.lib.utils import ImageReader
 
@@ -511,6 +515,10 @@ def create_pdf_comment_pages(comments, orig_page):
 
 def convert_word_to_pdf(word_path, pdf_path):
     """将Word文档转换为PDF格式"""
+    if not COMTYPES_AVAILABLE:
+        print("    comtypes not available, cannot convert Word to PDF in this environment.")
+        return False
+        
     try:
         pythoncom.CoInitialize()
 

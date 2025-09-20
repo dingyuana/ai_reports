@@ -1,63 +1,46 @@
-# Multi-stage build for optimized image size
-FROM python:3.9-slim as builder
+# 使用官方 Python 3.12 slim 作为基础镜像
+FROM python:3.12-slim
 
-# Install system dependencies for building Python packages
-RUN apt-get update && apt-get install -y \
+# 设置国内 Debian 源
+RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm main contrib non-free" > /etc/apt/sources.list && \
+    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm-updates main contrib non-free" >> /etc/apt/sources.list && \
+    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian-security bookworm-security main contrib non-free" >> /etc/apt/sources.list
+
+# 安装依赖工具（cryptography 需要 libssl-dev, libffi-dev, cargo）
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create virtual environment
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Copy requirements and install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Production stage
-FROM python:3.9-slim
-
-# Install runtime system dependencies
-RUN apt-get update && apt-get install -y \
-    # For PDF processing
+    libssl-dev \
+    libffi-dev \
+    cargo \
     poppler-utils \
-    # For font support
-    fontconfig \
-    fonts-dejavu-core \
-    # For Chinese font support
-    fonts-wqy-zenhei \
-    fonts-wqy-microhei \
-    # Clean up
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+ && rm -rf /var/lib/apt/lists/*
 
-# Copy virtual environment from builder stage
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Create non-root user
-RUN groupadd -r appuser && useradd -r -g appuser appuser
-
-# Set working directory
+# 设置工作目录
 WORKDIR /app
 
-# Create necessary directories with proper permissions
-RUN mkdir -p /app/student_reports /app/graded_reports /app/output /app/logs /app/temp /app/front \
-    && chown -R appuser:appuser /app
+# 创建临时目录（后续用 tmpfs 覆盖）
+RUN mkdir -p /app/tmp
 
-# Copy application code
-COPY --chown=appuser:appuser . .
+# 复制依赖文件
+COPY requirements-linux.txt requirements.txt ./
 
-# Switch to non-root user
-USER appuser
+# 使用国内 pip 源安装依赖（加 --default-timeout 提升构建稳定性）
+RUN pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple && \
+    pip install --no-cache-dir --default-timeout=100 -r requirements-linux.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-# Expose port
+# 复制应用代码
+COPY . .
+
+# 设置环境变量（让程序能直接找到临时目录）
+ENV TMP_DIR=/app/tmp
+
+# 暴露端口
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=5)" || exit 1
+# 以非 root 用户运行，提高安全性
+RUN useradd -m appuser && chown -R appuser /app
+USER appuser
 
-# Start command
-CMD ["python", "-m", "uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000"]
+# 启动应用
+CMD ["python", "main.py"]

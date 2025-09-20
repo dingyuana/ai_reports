@@ -1,92 +1,28 @@
-version: '3.8'
+version: "3.9"
 
 services:
   app:
     build: .
-    container_name: grading-system-app
-    restart: unless-stopped
-    environment:
-      - AI_API_KEY=${AI_API_KEY}
-      - ARK_API_KEY=${ARK_API_KEY}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - MAX_FILE_SIZE=${MAX_FILE_SIZE:-104857600}  # 100MB
-      - AI_TIMEOUT=${AI_TIMEOUT:-30}
-    volumes:
-      - student_reports:/app/student_reports
-      - graded_reports:/app/graded_reports
-      - output_data:/app/output
-      - app_logs:/app/logs
-      - temp_files:/app/temp:rw
-    networks:
-      - grading-network
-    depends_on:
-      - nginx
-    healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    deploy:
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 2G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
-
-  nginx:
-    image: nginx:alpine
-    container_name: grading-system-nginx
-    restart: unless-stopped
+    container_name: ai_report_app
     ports:
-      - "80:80"
-      - "443:443"
+      - "8080:8000"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./front:/usr/share/nginx/html:ro
-      - nginx_logs:/var/log/nginx
-      # SSL certificates (uncomment when using HTTPS)
-      # - ./ssl:/etc/nginx/ssl:ro
+      - ai_report_student_reports:/app/student_reports
+      - ai_report_graded_reports:/app/graded_reports
+      - ai_report_output_data:/app/output_data
+      - ai_report_app_logs:/app/logs
+      - ai_report_nginx_logs:/app/nginx_logs
+    tmpfs:
+      - /app/tmp:size=512m   # 临时缓存目录，用内存挂载，容器停止后自动清空
     networks:
       - grading-network
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-        reservations:
-          cpus: '0.1'
-          memory: 64M
 
 volumes:
-  student_reports:
-    driver: local
-  graded_reports:
-    driver: local
-  output_data:
-    driver: local
-  app_logs:
-    driver: local
-  temp_files:
-    driver: tmpfs
-    driver_opts:
-      type: tmpfs
-      device: tmpfs
-      o: size=1g,uid=1000,gid=1000
-  nginx_logs:
-    driver: local
+  ai_report_student_reports:
+  ai_report_graded_reports:
+  ai_report_output_data:
+  ai_report_app_logs:
+  ai_report_nginx_logs:
 
 networks:
   grading-network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16

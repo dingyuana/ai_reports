@@ -26,7 +26,11 @@ from reportlab.lib.colors import Color
 from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 import pdfplumber
-import win32com.client
+try:
+    import win32com.client
+    WIN32COM_AVAILABLE = True
+except ImportError:
+    WIN32COM_AVAILABLE = False
 
 # 配置日志记录器
 logger = logging.getLogger(__name__)
@@ -201,6 +205,10 @@ class WordProcessor(DocumentProcessor):
             doc = Document(file_path)
             return '\n'.join([para.text for para in doc.paragraphs])
         else:  # .doc
+            if not WIN32COM_AVAILABLE:
+                logger.warning("win32com not available, cannot process .doc files. Please convert to .docx format.")
+                return "Error: Cannot process .doc files in this environment. Please convert to .docx format."
+            
             word = win32com.client.Dispatch("Word.Application")
             doc = word.Documents.Open(file_path)
             text = doc.Content.Text
