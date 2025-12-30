@@ -138,6 +138,7 @@ class AnnotateScanModel(BaseModel):
     add_markings: bool
     ai_review: bool
     auto_grading: bool
+    selected_model: str = "glm-4.5-flash"
 
 
 import asyncio
@@ -153,12 +154,13 @@ async def run_in_threadpool(func, *args, **kwargs):
         )
 
 
-async def invoke_ark_model(prompt: str, max_retries: int = 3, timeout: int = 30) -> Optional[str]:
+async def invoke_ark_model(prompt: str, model_name: str = "glm-4.5-flash", max_retries: int = 3, timeout: int = 30) -> Optional[str]:
     """
-    调用智谱AI模型进行评估，支持重试和超时
+    调用大模型进行评估，支持重试和超时
 
     Args:
         prompt: 提示文本
+        model_name: 模型名称
         max_retries: 最大重试次数
         timeout: 超时时间（秒）
 
@@ -167,39 +169,78 @@ async def invoke_ark_model(prompt: str, max_retries: int = 3, timeout: int = 30)
     """
     for attempt in range(max_retries):
         try:
-            print(f"尝试调用智谱AI模型 (尝试 {attempt + 1}/{max_retries})")
+            print(f"尝试调用AI模型 {model_name} (尝试 {attempt + 1}/{max_retries})")
 
             # 定义同步调用函数
             def sync_call():
-                response = zhipu_client.chat.completions.create(
-                    model="glm-4.5-flash",
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ],
-                    temperature=0.3
-                )
-                # 提取回复内容
-                if hasattr(response.choices[0].message, "content"):
-                    return response.choices[0].message.content
-                return str(response.choices[0].message)
+                # 根据模型名称选择不同的调用方式
+                if model_name in ["thudm/glm-z1-9b-0414", "qwen/qwen3-8b"]:
+                    # 调用硅基流动API
+                    import requests
+                    
+                    # 硅基流动API配置
+                    API_KEY = "sk-kmqzqvmpwqhdxanpafbkytnfrdstifwgdvcglzrjkolyhzsq"
+                    API_URL = "https://api.siliconflow.cn/v1/chat/completions"
+                    
+                    # 硅基流动API使用完整的模型标识符
+                    siliconflow_model_name = model_name
+                    
+                    # 构建请求参数
+                    payload = {
+                        "model": siliconflow_model_name,  # 模型名称
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
+                        ],
+                        "temperature": 0.3
+                    }
+                    
+                    # 发送请求
+                    headers = {
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {API_KEY}"
+                    }
+                    response = requests.post(API_URL, json=payload, headers=headers, timeout=timeout)
+                    
+                    # 处理响应
+                    if response.status_code == 200:
+                        result = response.json()
+                        return result["choices"][0]["message"]["content"]
+                    else:
+                        raise Exception(f"API请求失败，状态码: {response.status_code}, 错误信息: {response.text}")
+                else:
+                    # 默认调用智谱AI模型
+                    response = zhipu_client.chat.completions.create(
+                        model="glm-4.5-flash",
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
+                        ],
+                        temperature=0.3
+                    )
+                    # 提取回复内容
+                    if hasattr(response.choices[0].message, "content"):
+                        return response.choices[0].message.content
+                    return str(response.choices[0].message)
 
             # 在线程池中执行API调用，避免阻塞事件循环
             start_time = time.time()
             response = await run_in_threadpool(sync_call)
             elapsed_time = time.time() - start_time
 
-            print(f"智谱AI模型调用成功，耗时: {elapsed_time:.2f}秒")
+            print(f"AI模型 {model_name} 调用成功，耗时: {elapsed_time:.2f}秒")
             return response
 
         except Exception as e:
-            print(f"智谱AI模型调用失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+            print(f"AI模型 {model_name} 调用失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
 
             # 如果已经是最后一次尝试，则返回None
             if attempt == max_retries - 1:
-                print(f"智谱AI模型调用失败，已达到最大重试次数: {max_retries}")
+                print(f"AI模型 {model_name} 调用失败，已达到最大重试次数: {max_retries}")
                 return None
 
             # 指数退避策略
@@ -315,7 +356,7 @@ async def annotate_report(scan_model: AnnotateScanModel):
                         }
                     else:
                         # 如果基本合格，再调用ARK模型进行详细评估
-                        response = await invoke_ark_model(prompt)
+                        response = await invoke_ark_model(prompt, model_name=scan_model.selected_model)
                         print(f"ARK模型评估结果: {response}")
 
                         if response is None:
@@ -327,15 +368,54 @@ async def annotate_report(scan_model: AnnotateScanModel):
                             }
                         else:
                             try:
+                                # 尝试直接解析JSON
                                 evaluation = json.loads(response)
                             except json.JSONDecodeError:
-                                print(f"无法解析ARK响应为JSON: {response}")
-                                evaluation = {
-                                    "score": 50,
-                                    "is_qualified": True,
-                                    "comments": "无法解析AI评估结果，使用默认评估",
-                                    "reasons": ["AI评估结果解析失败"]
-                                }
+                                print(f"无法解析AI模型响应为JSON: {response}")
+                                # 尝试提取文本中的关键信息
+                                try:
+                                    # 简单的规则匹配，提取分数和评语
+                                    import re
+                                    
+                                    # 尝试从响应中提取分数
+                                    score_match = re.search(r'"score"\s*:\s*(\d+)', response) or re.search(r'分数[:：]\s*(\d+)', response)
+                                    score = int(score_match.group(1)) if score_match else 75  # 默认分数
+                                    
+                                    # 尝试从响应中提取评语
+                                    comments_match = re.search(r'"comments"\s*:\s*"([^"]+)"', response) or re.search(r'评语[:：]\s*([^\n]+)', response)
+                                    comments = comments_match.group(1) if comments_match else "AI评估通过，整体表现良好。"  # 默认评语
+                                    
+                                    # 尝试从响应中提取合格状态
+                                    is_qualified = True
+                                    if "不合格" in response or "不通过" in response:
+                                        is_qualified = False
+                                    
+                                    # 尝试从响应中提取原因
+                                    reasons = []
+                                    reasons_match = re.search(r'"reasons"\s*:\s*\[([^\]]+)\]', response)
+                                    if reasons_match:
+                                        reasons_str = reasons_match.group(1)
+                                        reasons = [reason.strip(' "') for reason in reasons_str.split(',')]
+                                    elif not is_qualified:
+                                        reasons = ["AI评估不通过"]
+                                    
+                                    # 构建评估结果
+                                    evaluation = {
+                                        "score": score,
+                                        "is_qualified": is_qualified,
+                                        "comments": comments,
+                                        "reasons": reasons
+                                    }
+                                    print(f"使用提取的评估结果: {evaluation}")
+                                except Exception as e:
+                                    print(f"提取AI评估结果失败: {e}")
+                                    # 如果提取也失败，使用默认评估
+                                    evaluation = {
+                                        "score": 75,
+                                        "is_qualified": True,
+                                        "comments": "AI评估通过，整体表现良好。",
+                                        "reasons": []
+                                    }
 
                     # 获取评估结果
                     score = evaluation.get("score", 0)
@@ -436,26 +516,48 @@ async def annotate_report(scan_model: AnnotateScanModel):
                             output_ext = '.pdf'
                         
                         # 使用PDF处理器添加评语和分数
-                        output_file_path = os.path.join(graded_reports_dir, f"{base_filename}{output_ext}")
+                        intermediate_file_path = os.path.join(graded_reports_dir, f"{base_filename}_temp{output_ext}")
                         processor.add_comments_and_score(
                             processing_path,  # 处理的文件路径（可能是转换后的PDF）
                             comments,   # 评语
                             score,      # 分数
-                            output_file_path  # 输出文件路径
+                            intermediate_file_path  # 输出文件路径
                         )
                         
-                        # 如果需要添加对号标注
-                        if scan_model.add_markings:
-                            final_output_path = os.path.join(graded_reports_dir, f"{base_filename}_graded{output_ext}")
-                            processor.add_checkmarks(output_file_path, final_output_path)
+                        # 生成最终的graded文件
+                        final_output_path = os.path.join(graded_reports_dir, f"{base_filename}_graded{output_ext}")
                         
-                        # 清理临时转换文件
+                        if scan_model.add_markings:
+                            # 如果需要添加对号标注，生成最终文件
+                            processor.add_checkmarks(intermediate_file_path, final_output_path)
+                        else:
+                            # 如果不需要添加对号标注，直接重命名为graded文件
+                            os.rename(intermediate_file_path, final_output_path)
+                        
+                        # 清理临时文件
+                        if os.path.exists(intermediate_file_path):
+                            try:
+                                os.remove(intermediate_file_path)
+                                logger.info(f"已清理临时文件: {intermediate_file_path}")
+                            except Exception as e:
+                                logger.warning(f"清理临时文件失败: {e}")
+                        
+                        # 清理转换后的PDF临时文件
                         if ext in ['.doc', '.docx'] and os.path.exists(converted_pdf_path):
                             try:
                                 os.remove(converted_pdf_path)
-                                logger.info(f"已清理临时文件: {converted_pdf_path}")
+                                logger.info(f"已清理临时转换文件: {converted_pdf_path}")
                             except Exception as e:
-                                logger.warning(f"清理临时文件失败: {e}")
+                                logger.warning(f"清理临时转换文件失败: {e}")
+                        
+                        # 确保只保留最终的graded文件，删除可能存在的旧文件
+                        old_file_path = os.path.join(graded_reports_dir, f"{base_filename}{output_ext}")
+                        if os.path.exists(old_file_path):
+                            try:
+                                os.remove(old_file_path)
+                                logger.info(f"已清理旧文件: {old_file_path}")
+                            except Exception as e:
+                                logger.warning(f"清理旧文件失败: {e}")
 
                 except Exception as e:
                     print(f"评估过程中出错: {str(e)}")

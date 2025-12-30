@@ -239,12 +239,17 @@ document.addEventListener('DOMContentLoaded', () => {
         submitGradingBtn.textContent = '正在批阅...';
         submitGradingBtn.disabled = true;
 
-        const payload = {
-            directory: selectedDirectory,
-            add_markings: addMarkingsCheckbox.checked,
-            ai_review: aiReviewCheckbox.checked,
-            auto_grading: autoGradingCheckbox.checked,
-        };
+        // 获取选中的大模型
+            const modelSelect = document.getElementById('model-select');
+            const selectedModel = modelSelect.value;
+            
+            const payload = {
+                directory: selectedDirectory,
+                add_markings: addMarkingsCheckbox.checked,
+                ai_review: aiReviewCheckbox.checked,
+                auto_grading: autoGradingCheckbox.checked,
+                selected_model: selectedModel  // 添加选中的大模型
+            };
 
         try {
             const response = await fetch(`${API_BASE_URL}/api/annotate`, {

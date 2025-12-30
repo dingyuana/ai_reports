@@ -73,7 +73,7 @@ class PDFProcessor(DocumentProcessor):
         return text
 
     def add_comments_and_score(self, file_path: str, comments: str, score: int, output_path: str) -> None:
-        """在PDF上添加评语和分数"""
+        """在PDF上添加评语和分数，保留原报告内容"""
         input_pdf = PdfReader(file_path)
         output_pdf = PdfWriter()
         
