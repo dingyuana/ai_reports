@@ -36,11 +36,11 @@ COPY . .
 ENV TMP_DIR=/app/tmp
 
 # 暴露端口
-EXPOSE 8000
+EXPOSE 7654
 
 # 以非 root 用户运行，提高安全性
 RUN useradd -m appuser && chown -R appuser /app
 USER appuser
 
 # 启动应用
-CMD ["python", "main.py"]
+CMD ["python", "-c", "from api_server import app; import uvicorn; import os; port = int(os.getenv('PORT', 7654)); uvicorn.run(app, host='0.0.0.0', port=port)"]

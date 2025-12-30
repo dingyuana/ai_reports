@@ -1,0 +1,62 @@
+@startuml
+!theme plain
+skinparam backgroundColor #FFFFFF
+skinparam componentStyle rectangle
+skinparam defaultFontSize 12
+
+title AI实验报告自动批阅系统架构图
+
+package "前端界面" {
+  [Web界面\nHTML/CSS/JS] as Frontend
+}
+
+package "API服务层" {
+  [API服务器\nFastAPI] as API
+}
+
+package "核心模块层" {
+  [评分系统\nGradingSystem] as Grading
+  [AI评分器\nAIGrader] as AI
+  [文档处理器\nDocumentProcessor] as DocProc
+  [文件管理器\nFileManager] as FileMan
+}
+
+package "文档格式支持" {
+  [PDF处理器] as PDF
+  [Word处理器] as Word
+}
+
+package "外部服务" {
+  [AI服务\n豆包大模型] as AIService
+}
+
+package "数据存储" {
+  [学生报告目录] as StudentReports
+  [已评分报告目录] as GradedReports
+  [输出数据目录] as OutputData
+  [日志目录] as Logs
+}
+
+package "部署组件" {
+  [Docker容器] as Docker
+  [Nginx反向代理] as Nginx
+  [监控栈\nPrometheus/Grafana] as Monitoring
+}
+
+Frontend --> API : HTTP请求
+API --> Grading : API调用
+Grading --> AI : AI评分请求
+Grading --> DocProc : 文档处理
+Grading --> FileMan : 文件管理
+AI --> AIService : API调用
+DocProc --> PDF : PDF处理
+DocProc --> Word : Word处理
+FileMan --> StudentReports : 读取
+FileMan --> GradedReports : 写入
+FileMan --> OutputData : 写入
+FileMan --> Logs : 写入
+Docker --> Grading : 容器化运行
+Nginx --> API : 反向代理
+Monitoring --> API : 指标收集
+
+@enduml

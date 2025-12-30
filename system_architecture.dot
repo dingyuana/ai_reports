@@ -1,0 +1,96 @@
+digraph SystemArchitecture {
+    // 图的全局设置
+    rankdir=TB;
+    fontsize=12;
+    fontname="Arial";
+    compound=true;
+    nodesep=1.0;
+    ranksep=1.5;
+    
+    // 节点样式
+    node [shape=box, style="rounded,filled", fontname="Arial", fontsize=10];
+    
+    // 前端界面
+    frontend [label="前端界面\n(HTML/CSS/JS)", fillcolor="#a0c4ff"];
+    
+    // API服务层
+    api_server [label="API服务器\n(FastAPI)", fillcolor="#90ee90"];
+    
+    // 核心模块层
+    subgraph cluster_core_modules {
+        style="rounded,filled";
+        fillcolor="#ffe4b5";
+        label="核心模块层";
+        
+        grading_system [label="评分系统\n(GradingSystem)", fillcolor="#f0e68c"];
+        ai_grader [label="AI评分器\n(AIGrader)", fillcolor="#f0e68c"];
+        doc_processor [label="文档处理器\n(DocumentProcessor)", fillcolor="#f0e68c"];
+        file_manager [label="文件管理器\n(FileManager)", fillcolor="#f0e68c"];
+    }
+    
+    // AI服务
+    ai_service [label="AI服务\n(豆包大模型)", fillcolor="#ffcccb"];
+    
+    // 文档格式支持
+    subgraph cluster_doc_formats {
+        style="rounded,filled";
+        fillcolor="#e6e6fa";
+        label="文档格式支持";
+        
+        pdf_processor [label="PDF处理器", fillcolor="#dda0dd"];
+        word_processor [label="Word处理器", fillcolor="#dda0dd"];
+    }
+    
+    // 数据存储
+    subgraph cluster_storage {
+        style="rounded,filled";
+        fillcolor="#f0f8ff";
+        label="数据存储";
+        
+        student_reports [label="学生报告\n(student_reports)", fillcolor="#afeeee"];
+        graded_reports [label="已评分报告\n(graded_reports)", fillcolor="#afeeee"];
+        output_data [label="输出数据\n(output_data)", fillcolor="#afeeee"];
+        logs [label="日志\n(logs)", fillcolor="#afeeee"];
+    }
+    
+    // 部署组件
+    subgraph cluster_deployment {
+        style="rounded,filled";
+        fillcolor="#f5f5dc";
+        label="部署组件";
+        
+        docker [label="Docker容器", fillcolor="#dcdcdc"];
+        nginx [label="Nginx\n(反向代理/SSL)", fillcolor="#dcdcdc"];
+        monitoring [label="监控栈\n(Prometheus/Grafana)", fillcolor="#dcdcdc"];
+    }
+    
+    // 前端到API服务器
+    frontend -> api_server [label="HTTP请求", color="#666666"];
+    
+    // API服务器到核心模块
+    api_server -> grading_system [label="API调用", color="#666666"];
+    
+    // 核心模块之间的关系
+    grading_system -> ai_grader [label="AI评分请求", color="#666666"];
+    grading_system -> doc_processor [label="文档处理", color="#666666"];
+    grading_system -> file_manager [label="文件管理", color="#666666"];
+    
+    // AI评分器到AI服务
+    ai_grader -> ai_service [label="API调用", color="#666666"];
+    
+    // 文档处理器到具体格式处理器
+    doc_processor -> pdf_processor [label="PDF处理", color="#666666"];
+    doc_processor -> word_processor [label="Word处理", color="#666666"];
+    
+    // 文件管理器到数据存储
+    file_manager -> student_reports [label="读取", color="#666666"];
+    file_manager -> graded_reports [label="写入", color="#666666"];
+    file_manager -> output_data [label="写入", color="#666666"];
+    file_manager -> logs [label="写入", color="#666666"];
+    
+    // 部署组件连接
+    docker -> api_server [label="容器化运行", color="#666666"];
+    nginx -> api_server [label="反向代理", color="#666666"];
+    api_server -> logs [label="日志输出", color="#666666"];
+    monitoring -> api_server [label="指标收集", color="#666666"];
+}
