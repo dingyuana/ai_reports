@@ -43,7 +43,7 @@ aiofiles==23.2.1
 celery==5.3.4
 
 # Security
-cryptography==41.0.8
+cryptography>=41.0.0
 
 # System monitoring and health checks
 psutil==5.9.6
