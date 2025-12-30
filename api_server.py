@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from grading_system import GradingSystem
-from volcenginesdkarkruntime import Ark
+from zai import ZhipuAiClient
 from config import API_CONFIG
 # Import temporary file manager
 from utils.temp_file_manager import temp_manager, temp_file, temp_dir
@@ -52,11 +52,11 @@ GRADING_CRITERIA = """
 # 创建评分系统实例
 grading_system = GradingSystem(REPORTS_DIR, OUTPUT_DIR, API_CONFIG)
 
-# 配置ARK模型
-ark_api_key = os.getenv('ARK_API_KEY')
-if not ark_api_key:
+# 配置智谱AI模型
+zhipu_api_key = os.getenv('ARK_API_KEY')
+if not zhipu_api_key:
     raise ValueError("ARK_API_KEY environment variable is not set")
-ark = Ark(api_key=ark_api_key)
+zhipu_client = ZhipuAiClient(api_key=zhipu_api_key)
 
 
 @app.get("/api/reports/")
@@ -150,7 +150,7 @@ async def run_in_threadpool(func, *args, **kwargs):
 
 async def invoke_ark_model(prompt: str, max_retries: int = 3, timeout: int = 30) -> Optional[str]:
     """
-    调用ARK模型进行评估，支持重试和超时
+    调用智谱AI模型进行评估，支持重试和超时
 
     Args:
         prompt: 提示文本
@@ -162,35 +162,39 @@ async def invoke_ark_model(prompt: str, max_retries: int = 3, timeout: int = 30)
     """
     for attempt in range(max_retries):
         try:
-            print(f"尝试调用ARK模型 (尝试 {attempt + 1}/{max_retries})")
+            print(f"尝试调用智谱AI模型 (尝试 {attempt + 1}/{max_retries})")
 
             # 定义同步调用函数
             def sync_call():
-                # 使用chat.completions.create替代invoke方法
-                completion = ark.chat.completions.create(
-                    model="doubao-1-5-thinking-pro-250415",
-                    messages=[{"role": "user", "content": prompt}],
-                    timeout=timeout
+                response = zhipu_client.chat.completions.create(
+                    model="glm-4.7",
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    temperature=0.3
                 )
                 # 提取回复内容
-                if hasattr(completion.choices[0].message, "content"):
-                    return completion.choices[0].message.content
-                return str(completion.choices[0].message)
+                if hasattr(response.choices[0].message, "content"):
+                    return response.choices[0].message.content
+                return str(response.choices[0].message)
 
             # 在线程池中执行API调用，避免阻塞事件循环
             start_time = time.time()
             response = await run_in_threadpool(sync_call)
             elapsed_time = time.time() - start_time
 
-            print(f"ARK模型调用成功，耗时: {elapsed_time:.2f}秒")
+            print(f"智谱AI模型调用成功，耗时: {elapsed_time:.2f}秒")
             return response
 
         except Exception as e:
-            print(f"ARK模型调用失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+            print(f"智谱AI模型调用失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
 
             # 如果已经是最后一次尝试，则返回None
             if attempt == max_retries - 1:
-                print(f"ARK模型调用失败，已达到最大重试次数: {max_retries}")
+                print(f"智谱AI模型调用失败，已达到最大重试次数: {max_retries}")
                 return None
 
             # 指数退避策略
@@ -418,11 +422,28 @@ async def annotate_report(scan_model: AnnotateScanModel):
                 print(f"生成CSV文件失败: {str(csv_error)}")
                 csv_path = None
 
+        # 返回合格报告的CSV文件路径
+        qualified_csv_path = None
+        if 'output_subdir' in locals():
+            qualified_csv_path = os.path.join(output_subdir, "合格报告分数.csv")
+        
+        # 确保返回相对路径，便于前端访问
+        qualified_csv_file_url = None
+        if qualified_csv_path and os.path.exists(qualified_csv_path):
+            # 将绝对路径转换为API可访问的路径
+            qualified_csv_file_url = qualified_csv_path
+            
+        failed_csv_file_url = None
+        if csv_path and os.path.exists(csv_path):
+            # 将绝对路径转换为API可访问的路径
+            failed_csv_file_url = csv_path
+        
         return {
             "message": f"成功扫描了 {len(documents_content)} 个文档",
             # "documents": documents_content,
             "failed_count": len(failed_reports),
-            "csv_file": csv_path if failed_reports else None
+            "csv_file": failed_csv_file_url,
+            "qualified_csv_file": qualified_csv_file_url
         }
 
     except Exception as e:
@@ -480,11 +501,6 @@ async def upload_zip_file(file: UploadFile = File(...)):
     return {"message": f"文件 '{file.filename}' 已成功上传并解压到 '{dir_name}' 目录"}
 
 
-# 挂载静态文件目录
-# 注意：这必须在所有API路由之后进行，以确保API路由优先匹配
-app.mount("/", StaticFiles(directory="front", html=True), name="front")
-
-
 class SingleReportModel(BaseModel):
     file_path: str
     score: Optional[float] = None
@@ -525,12 +541,63 @@ async def grade_single_report(data: SingleReportModel):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.delete("/api/reports/{directory_name}")
+async def delete_report_directory(directory_name: str):
+    """删除指定的报告目录"""
+    try:
+        # 确保目录名安全，防止路径遍历攻击
+        safe_dir_name = os.path.normpath(directory_name).replace("..", "")
+        dir_path = os.path.join("student_reports", safe_dir_name)
+        
+        if not os.path.exists(dir_path):
+            raise HTTPException(status_code=404, detail="目录不存在")
+        
+        if not os.path.isdir(dir_path):
+            raise HTTPException(status_code=400, detail="路径不是目录")
+        
+        # 删除目录及其内容
+        shutil.rmtree(dir_path)
+        
+        return {"message": f"目录 '{directory_name}' 已成功删除"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"删除目录失败: {str(e)}")
+
+
+@app.delete("/api/graded-reports/{directory_name}")
+async def delete_graded_report_directory(directory_name: str):
+    """删除指定的已批阅报告目录"""
+    try:
+        # 确保目录名安全，防止路径遍历攻击
+        safe_dir_name = os.path.normpath(directory_name).replace("..", "")
+        dir_path = os.path.join("graded_reports", safe_dir_name)
+        
+        if not os.path.exists(dir_path):
+            raise HTTPException(status_code=404, detail="目录不存在")
+        
+        if not os.path.isdir(dir_path):
+            raise HTTPException(status_code=400, detail="路径不是目录")
+        
+        # 删除目录及其内容
+        shutil.rmtree(dir_path)
+        
+        return {"message": f"目录 '{directory_name}' 已成功删除"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"删除目录失败: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
 
     import os
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 @app.get("/api/temp/usage")
 async def get_temp_usage():
@@ -620,3 +687,34 @@ async def readiness_probe():
             
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Readiness check failed: {str(e)}")
+
+@app.get("/api/download-csv")
+async def download_csv(file_path: str):
+    """下载CSV文件"""
+    try:
+        # 确保路径安全，防止路径遍历攻击
+        safe_path = os.path.normpath(file_path).replace("..", "")
+        full_path = os.path.abspath(safe_path)
+        
+        # 只允许访问输出目录下的文件
+        allowed_base = os.path.abspath(OUTPUT_DIR)
+        if not full_path.startswith(allowed_base):
+            raise HTTPException(status_code=403, detail="访问被拒绝")
+        
+        if not os.path.exists(full_path):
+            raise HTTPException(status_code=404, detail="文件不存在")
+        
+        return FileResponse(
+            path=full_path,
+            filename=os.path.basename(full_path),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={os.path.basename(full_path)}"}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"下载失败: {str(e)}")
+
+# 挂载静态文件目录
+# 注意：这必须在所有API路由之后进行，以确保API路由优先匹配
+app.mount("/", StaticFiles(directory="front", html=True), name="front")

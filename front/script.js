@@ -56,6 +56,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const downloadButtonHtml = !isStudentReports
                 ? `<button class="button small-button download-btn" data-download-dir="${item.name}">下载</button>`
                 : '';
+            
+            const deleteButtonHtml = `<button class="button small-button delete-btn" 
+                data-delete-dir="${item.name}" 
+                data-delete-type="${isStudentReports ? 'student' : 'graded'}">删除</button>`;
 
             itemRow.innerHTML = `
                 <span class="caret"></span>
@@ -63,6 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <span class="name">${item.name}</span>
                 <span class="file-count">(${fileCount}个)</span>
                 ${downloadButtonHtml}
+                ${deleteButtonHtml}
             `;
 
             const fileUl = document.createElement('ul');
@@ -257,9 +262,27 @@ document.addEventListener('DOMContentLoaded', () => {
             renderReportResults(result.documents);
             await fetchAndRenderGradedReports();
 
+            // 处理不合格报告CSV
             if (result.failed_count > 0 && result.csv_file) {
-                csvDownloadLinkEl.href = `${API_BASE_URL}/${result.csv_file}`;
+                csvDownloadLinkEl.href = `${API_BASE_URL}/api/download-csv?file_path=${encodeURIComponent(result.csv_file)}`;
+                csvDownloadLinkEl.textContent = '下载不合格报告 (CSV)';
                 csvDownloadLinkEl.classList.remove('hidden');
+            }
+            
+            // 处理合格报告CSV
+            if (result.qualified_csv_file) {
+                const qualifiedCsvLink = document.createElement('a');
+                qualifiedCsvLink.className = 'button';
+                qualifiedCsvLink.href = `${API_BASE_URL}/api/download-csv?file_path=${encodeURIComponent(result.qualified_csv_file)}`;
+                qualifiedCsvLink.textContent = '下载合格报告成绩 (CSV)';
+                qualifiedCsvLink.download = '';
+                qualifiedCsvLink.style.marginLeft = '10px';
+                
+                // 添加到结果容器
+                const header = resultsContainerEl.querySelector('.results-header');
+                if (header) {
+                    header.appendChild(qualifiedCsvLink);
+                }
             }
 
         } catch (error) {
@@ -288,6 +311,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const card = document.createElement('div');
             card.className = `report-card ${isQualified ? 'qualified' : 'unqualified'}`;
             
+            // 确保正确显示中文字符，防止乱码
+            const safeComments = report.comments ? report.comments.replace(/[<>&]/g, (match) => {
+                const escapeMap = {'<': '&lt;', '>': '&gt;', '&': '&amp;'};
+                return escapeMap[match];
+            }) : '无';
+            
             card.innerHTML = `
                 <h3>
                     <span>${report.filename}</span>
@@ -300,7 +329,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <div class="comments">
                     <strong>AI评语:</strong>
-                    <p>${report.comments || '无'}</p>
+                    <p>${safeComments}</p>
                 </div>
             `;
             reportListEl.appendChild(card);
@@ -340,6 +369,60 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             button.innerHTML = '下载';
             button.disabled = false;
+        }
+    }
+
+    /**
+     * 删除待批阅报告目录
+     */
+    async function deleteReportDirectory(directoryName) {
+        if (!confirm(`确定要删除目录 "${directoryName}" 吗？此操作不可撤销。`)) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/reports/${encodeURIComponent(directoryName)}`, {
+                method: 'DELETE',
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || '删除失败');
+            }
+
+            // 重新加载待批阅报告列表
+            await fetchAndRenderStudentReports();
+            alert(`目录 "${directoryName}" 已成功删除`);
+        } catch (error) {
+            console.error('删除待批阅报告目录失败:', error);
+            alert(`删除失败: ${error.message}`);
+        }
+    }
+
+    /**
+     * 删除已批阅报告目录
+     */
+    async function deleteGradedDirectory(directoryName) {
+        if (!confirm(`确定要删除目录 "${directoryName}" 吗？此操作不可撤销。`)) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/graded-reports/${encodeURIComponent(directoryName)}`, {
+                method: 'DELETE',
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || '删除失败');
+            }
+
+            // 重新加载已批阅报告列表
+            await fetchAndRenderGradedReports();
+            alert(`目录 "${directoryName}" 已成功删除`);
+        } catch (error) {
+            console.error('删除已批阅报告目录失败:', error);
+            alert(`删除失败: ${error.message}`);
         }
     }
 
@@ -390,6 +473,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (target.classList.contains('download-btn')) {
             const dirName = target.dataset.downloadDir;
             downloadGradedDirectory(dirName);
+        }
+        
+        // 点击删除按钮（待批阅报告）
+        if (target.classList.contains('delete-btn') && target.dataset.deleteType === 'student') {
+            const dirName = target.dataset.deleteDir;
+            deleteReportDirectory(dirName);
+        }
+        
+        // 点击删除按钮（已批阅报告）
+        if (target.classList.contains('delete-btn') && target.dataset.deleteType === 'graded') {
+            const dirName = target.dataset.deleteDir;
+            deleteGradedDirectory(dirName);
         }
     });
 

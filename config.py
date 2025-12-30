@@ -57,8 +57,8 @@ except ImportError:
 if USE_SECRETS_MANAGER:
     API_CONFIG = {
         "api_key": get_ai_api_key(),
-        "api_endpoint": get_env_var("AI_API_ENDPOINT", "https://api.doubao.com/v1/chat/completions"),
-        "model": get_env_var("AI_MODEL", "doubao-pro"),
+        "api_endpoint": get_env_var("AI_API_ENDPOINT", "https://open.bigmodel.cn/api/paas/v4"),
+        "model": get_env_var("AI_MODEL", "glm-4.7"),
         "timeout": AI_TIMEOUT,
         "max_retries": MAX_RETRIES,
         "temperature": float(get_env_var("AI_TEMPERATURE", "0.7"))
@@ -68,8 +68,8 @@ if USE_SECRETS_MANAGER:
 else:
     API_CONFIG = {
         "api_key": get_env_var("AI_API_KEY", required=True),
-        "api_endpoint": get_env_var("AI_API_ENDPOINT", "https://api.doubao.com/v1/chat/completions"),
-        "model": get_env_var("AI_MODEL", "doubao-pro"),
+        "api_endpoint": get_env_var("AI_API_ENDPOINT", "https://open.bigmodel.cn/api/paas/v4"),
+        "model": get_env_var("AI_MODEL", "glm-4.7"),
         "timeout": AI_TIMEOUT,
         "max_retries": MAX_RETRIES,
         "temperature": float(get_env_var("AI_TEMPERATURE", "0.7"))
