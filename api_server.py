@@ -174,7 +174,7 @@ async def invoke_ark_model(prompt: str, model_name: str = "glm-4.5-flash", max_r
             # 定义同步调用函数
             def sync_call():
                 # 根据模型名称选择不同的调用方式
-                if model_name in ["thudm/glm-z1-9b-0414", "qwen/qwen3-8b"]:
+                if model_name in ["thudm/glm-z1-9b-0414", "qwen/qwen3-8b", "zai-org/GLM-4.6V"]:
                     # 调用硅基流动API
                     import requests
                     
