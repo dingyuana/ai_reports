@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev \
     cargo \
     poppler-utils \
+    libreoffice \
  && rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录

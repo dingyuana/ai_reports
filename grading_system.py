@@ -128,11 +128,36 @@ class GradingSystem:
                 if file_ext not in self.document_processors:
                     logger.warning(f"不支持的文件格式: {file_ext}")
                     continue
-
-                processor = self.document_processors[file_ext]
+                
+                # 转换Word文件为PDF
+                converted_pdf_path = None
+                if file_ext in ['.doc', '.docx']:
+                    logger.info(f"正在将Word文件转换为PDF: {report_path}")
+                    word_processor = self.document_processors[file_ext]
+                    
+                    # 构建转换后的PDF路径
+                    base_name = os.path.basename(report_path)
+                    file_name, _ = os.path.splitext(base_name)
+                    converted_pdf_path = os.path.join(
+                        self.file_manager.output_dir,
+                        f"{file_name}_converted.pdf"
+                    )
+                    
+                    # 转换为PDF
+                    if not word_processor.convert_to_pdf(report_path, converted_pdf_path):
+                        logger.error(f"转换Word文件为PDF失败: {report_path}")
+                        continue
+                    
+                    # 切换到PDF处理器
+                    processor = self.document_processors['.pdf']
+                    processing_path = converted_pdf_path
+                else:
+                    # 直接使用原文件路径
+                    processor = self.document_processors[file_ext]
+                    processing_path = report_path
 
                 # 提取报告文本
-                report_text = processor.extract_text(report_path)
+                report_text = processor.extract_text(processing_path)
 
                 # AI批阅
                 result = self.ai_grader.grade_report(report_text, self.grading_criteria)
@@ -147,7 +172,7 @@ class GradingSystem:
 
                 # 添加评语和分数
                 processor.add_comments_and_score(
-                    report_path, result["comments"], result["score"], output_pdf_path
+                    processing_path, result["comments"], result["score"], output_pdf_path
                 )
 
                 # 添加对号标注
@@ -166,6 +191,14 @@ class GradingSystem:
                     "comments": result["comments"],
                     "annotated_report_path": final_output_path
                 })
+
+                # 清理临时文件
+                if converted_pdf_path and os.path.exists(converted_pdf_path):
+                    try:
+                        os.remove(converted_pdf_path)
+                        logger.info(f"已清理临时文件: {converted_pdf_path}")
+                    except Exception as e:
+                        logger.warning(f"清理临时文件失败: {e}")
 
                 logger.info(f"报告处理完成: {student_name}, 分数: {result['score']}")
 

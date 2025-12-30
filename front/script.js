@@ -260,7 +260,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await response.json();
             
             renderReportResults(result.documents);
+            
+            // 在所有文件批注完成后，刷新两个报告列表
             await fetchAndRenderGradedReports();
+            await fetchAndRenderStudentReports();
 
             // 处理不合格报告CSV
             if (result.failed_count > 0 && result.csv_file) {
@@ -284,6 +287,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     header.appendChild(qualifiedCsvLink);
                 }
             }
+
+            // 所有文件批注完成后，自动关闭结果弹出窗口
+            setTimeout(() => {
+                resultsContainerEl.classList.add('hidden');
+            }, 3000);
 
         } catch (error) {
             console.error('批阅时出错:', error);
