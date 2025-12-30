@@ -575,57 +575,70 @@ async def annotate_report(scan_model: AnnotateScanModel):
                 print(f"处理文档失败: {str(doc_error)}")
                 continue
 
-        # 如果有不合格的报告，将它们保存为CSV文件
-        csv_path = None
-        if failed_reports:
-            try:
-                # 创建输出子目录
-                output_subdir = os.path.join(OUTPUT_DIR, decoded_directory)
-                os.makedirs(output_subdir, exist_ok=True)
-
-                # 生成CSV文件名（使用时间戳确保唯一性）
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                csv_filename = f"不合格报告_{timestamp}.csv"
-                csv_path = os.path.join(output_subdir, csv_filename)
-
-                # 写入CSV文件
-                with open(csv_path, 'w', newline='', encoding='utf-8-sig') as csvfile:
-                    fieldnames = ['用户名', '状态', '文件名']
-                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
-                    writer.writeheader()
-                    for report in failed_reports:
-                        writer.writerow({
-                            '用户名': report['username'],
-                            '状态': report['status'],
-                            '文件名': report['filename']
-                        })
-            except Exception as csv_error:
-                print(f"生成CSV文件失败: {str(csv_error)}")
-                csv_path = None
-
-        # 返回合格报告的CSV文件路径
-        qualified_csv_path = None
-        if 'output_subdir' in locals():
-            qualified_csv_path = os.path.join(output_subdir, "合格报告分数.csv")
-        
-        # 确保返回相对路径，便于前端访问
-        qualified_csv_file_url = None
-        if qualified_csv_path and os.path.exists(qualified_csv_path):
-            # 将绝对路径转换为API可访问的路径
-            qualified_csv_file_url = qualified_csv_path
+        # 创建综合报告CSV文件，包含所有报告的详细信息
+        try:
+            # 生成综合CSV文件名（使用时间戳确保唯一性）
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            comprehensive_csv_filename = f"报告评分汇总_{timestamp}.csv"
             
-        failed_csv_file_url = None
-        if csv_path and os.path.exists(csv_path):
-            # 将绝对路径转换为API可访问的路径
-            failed_csv_file_url = csv_path
-        
+            # 将CSV文件保存到graded_reports目录，这样在压缩时会包含在内
+            comprehensive_csv_path = os.path.join(graded_reports_dir, comprehensive_csv_filename)
+
+            # 写入综合CSV文件
+            with open(comprehensive_csv_path, 'w', newline='', encoding='utf-8-sig') as csvfile:
+                fieldnames = ['学号', '姓名', '实验名称', '得分', '评语', '状态', '备注']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+                writer.writeheader()
+                
+                # 遍历所有处理过的文档
+                for doc in documents_content:
+                    # 从文件名中提取信息
+                    filename = doc['filename']
+                    parts = filename.split('-')
+                    
+                    # 尝试提取学号、姓名、实验名称
+                    student_id = "未知"
+                    student_name = "未知"
+                    experiment_name = "未知"
+                    
+                    if len(parts) >= 3:
+                        # 假设文件名格式：班级-学号-姓名-实验名称.pdf
+                        student_id = parts[1]  # 学号
+                        student_name = parts[2].split('.')[0]  # 姓名
+                        # 提取实验名称（移除文件扩展名）
+                        experiment_name = "-".join(parts[3:]).split('.')[0] if len(parts) > 3 else "未知"
+                    else:
+                        # 如果文件名格式不符合预期，使用文件名作为实验名称
+                        student_name = filename.split('.')[0]
+                        experiment_name = filename.split('.')[0]
+                    
+                    # 获取报告状态和备注
+                    status = doc['status']
+                    remarks = ""
+                    if status == "未知" or status == "不合格":
+                        remarks = doc.get('comments', '未能正确识别判断')
+                    
+                    # 写入CSV行
+                    writer.writerow({
+                        '学号': student_id,
+                        '姓名': student_name,
+                        '实验名称': experiment_name,
+                        '得分': doc['score'],
+                        '评语': doc['comments'],
+                        '状态': status,
+                        '备注': remarks
+                    })
+            
+            print(f"综合报告评分汇总CSV已生成: {comprehensive_csv_path}")
+        except Exception as csv_error:
+            print(f"生成综合CSV文件失败: {str(csv_error)}")
+
+        # 返回结果
         return {
             "message": f"成功扫描了 {len(documents_content)} 个文档",
-            # "documents": documents_content,
             "failed_count": len(failed_reports),
-            "csv_file": failed_csv_file_url,
-            "qualified_csv_file": qualified_csv_file_url
+            "documents": documents_content
         }
 
     except Exception as e:
