@@ -51,8 +51,16 @@ class DocumentProcessor(ABC):
         pass
 
     @abstractmethod
-    def add_comments_and_score(self, file_path: str, comments: str, score: int, output_path: str) -> None:
-        """在文档上添加评语和分数"""
+    def add_comments_and_score(self, file_path: str, comments: str, score: int, output_path: str, add_score: bool = True) -> None:
+        """在文档上添加评语和分数
+        
+        Args:
+            file_path: 输入文档路径
+            comments: 要添加的评语
+            score: 要添加的分数
+            output_path: 输出文档路径
+            add_score: 是否添加分数，默认为True
+        """
         pass
 
     @abstractmethod
@@ -72,36 +80,47 @@ class PDFProcessor(DocumentProcessor):
                 text += page.extract_text() or ""
         return text
 
-    def add_comments_and_score(self, file_path: str, comments: str, score: int, output_path: str) -> None:
-        """在PDF上添加评语和分数，保留原报告内容"""
+    def add_comments_and_score(self, file_path: str, comments: str, score: int, output_path: str, add_score: bool = True) -> None:
+        """在PDF上添加评语和分数，保留原报告内容
+        
+        Args:
+            file_path: 输入PDF路径
+            comments: 要添加的评语
+            score: 要添加的分数
+            output_path: 输出PDF路径
+            add_score: 是否添加分数，默认为True
+        """
         input_pdf = PdfReader(file_path)
         output_pdf = PdfWriter()
         
-        # 处理第一页：在右上角添加分数
+        # 处理第一页
         first_page = input_pdf.pages[0]
         
-        # 创建分数标注
-        score_packet = io.BytesIO()
-        score_canvas = canvas.Canvas(score_packet, pagesize=letter)
-        score_canvas.setFont("Helvetica-Bold", 48)  # 字号增加到48pt
-        score_canvas.setFillColor(Color(1, 0, 0, alpha=0.8))  # 红色
+        # 只在需要时添加分数
+        if add_score:
+            # 创建分数标注
+            score_packet = io.BytesIO()
+            score_canvas = canvas.Canvas(score_packet, pagesize=letter)
+            score_canvas.setFont("Helvetica-Bold", 48)  # 字号增加到48pt
+            score_canvas.setFillColor(Color(1, 0, 0, alpha=0.8))  # 红色
+            
+            # 获取页面尺寸以确定右上角位置
+            page_width = float(first_page.mediabox.width)
+            page_height = float(first_page.mediabox.height)
+            
+            # 在右上角添加分数，只显示数字
+            score_x = page_width - 180  # 距离右边180点（增加空间以适应大字体）
+            score_y = page_height - 120  # 距离顶部120点，更靠下的位置，确保显示完整
+            score_canvas.drawString(score_x, score_y, f"{score}")
+            
+            score_canvas.save()
+            
+            score_packet.seek(0)
+            score_pdf = PdfReader(score_packet)
+            
+            # 合并分数到第一页
+            first_page.merge_page(score_pdf.pages[0])
         
-        # 获取页面尺寸以确定右上角位置
-        page_width = float(first_page.mediabox.width)
-        page_height = float(first_page.mediabox.height)
-        
-        # 在右上角添加分数，只显示数字
-        score_x = page_width - 180  # 距离右边180点（增加空间以适应大字体）
-        score_y = page_height - 120  # 距离顶部120点，更靠下的位置，确保显示完整
-        score_canvas.drawString(score_x, score_y, f"{score}")
-        
-        score_canvas.save()
-        
-        score_packet.seek(0)
-        score_pdf = PdfReader(score_packet)
-        
-        # 合并分数到第一页
-        first_page.merge_page(score_pdf.pages[0])
         output_pdf.add_page(first_page)
         
         # 添加其余页面
@@ -429,8 +448,16 @@ class WordProcessor(DocumentProcessor):
             word.Quit()
             return text
 
-    def add_comments_and_score(self, file_path: str, comments: str, score: int, output_path: str) -> None:
-        """在Word文档上添加评语和分数"""
+    def add_comments_and_score(self, file_path: str, comments: str, score: int, output_path: str, add_score: bool = True) -> None:
+        """在Word文档上添加评语和分数
+        
+        Args:
+            file_path: 输入Word文档路径
+            comments: 要添加的评语
+            score: 要添加的分数
+            output_path: 输出Word文档路径
+            add_score: 是否添加分数，默认为True
+        """
         if WIN32COM_AVAILABLE and file_path.lower().endswith('.doc'):
             # 使用win32com处理.doc文件
             word = win32com.client.Dispatch("Word.Application")
@@ -438,25 +465,27 @@ class WordProcessor(DocumentProcessor):
             doc = word.Documents.Open(file_path)
             
             try:
-                # 在首页右上角添加分数
-                selection = word.Selection
-                
-                # 转到首页
-                selection.GoTo(What=1, Which=1, Count=1)  # 1=wdGoToPage, 1=wdGoToFirst
-                
-                # 转到页首
-                selection.HomeKey(Unit=6)  # 6=wdStory
-                
-                # 设置为右对齐
-                selection.ParagraphFormat.Alignment = 2  # 2=wdAlignParagraphRight
-                
-                # 插入分数，只显示数字
-                selection.TypeText(f"{score}")
-                
-                # 设置分数格式
-                selection.Font.Bold = True
-                selection.Font.Size = 48  # 字号增加到48pt
-                selection.Font.Color = 16711680  # 红色
+                # 只在需要时添加分数
+                if add_score:
+                    # 在首页右上角添加分数
+                    selection = word.Selection
+                    
+                    # 转到首页
+                    selection.GoTo(What=1, Which=1, Count=1)  # 1=wdGoToPage, 1=wdGoToFirst
+                    
+                    # 转到页首
+                    selection.HomeKey(Unit=6)  # 6=wdStory
+                    
+                    # 设置为右对齐
+                    selection.ParagraphFormat.Alignment = 2  # 2=wdAlignParagraphRight
+                    
+                    # 插入分数，只显示数字
+                    selection.TypeText(f"{score}")
+                    
+                    # 设置分数格式
+                    selection.Font.Bold = True
+                    selection.Font.Size = 48  # 字号增加到48pt
+                    selection.Font.Color = 16711680  # 红色
                 
                 # 添加分页符
                 selection.TypeParagraph()
@@ -497,19 +526,20 @@ class WordProcessor(DocumentProcessor):
             # 使用python-docx处理.docx文件
             doc = Document(file_path)
             
-            # 在首页右上角添加分数
-            # 在首页右上角添加分数，只显示数字
-            score_para = doc.add_paragraph()
-            score_para.alignment = WD_PARAGRAPH_ALIGNMENT.RIGHT
-            
-            # 调整段落间距，为大字体提供足够空间
-            from docx.shared import Pt
-            score_para.paragraph_format.space_before = Pt(10)
-            score_para.paragraph_format.space_after = Pt(10)
-            
-            score_run = score_para.add_run(f"{score}")
-            score_run.bold = True
-            score_run.font.size = 48  # 字号增加到48pt
+            # 只在需要时添加分数
+            if add_score:
+                # 在首页右上角添加分数，只显示数字
+                score_para = doc.add_paragraph()
+                score_para.alignment = WD_PARAGRAPH_ALIGNMENT.RIGHT
+                
+                # 调整段落间距，为大字体提供足够空间
+                from docx.shared import Pt
+                score_para.paragraph_format.space_before = Pt(10)
+                score_para.paragraph_format.space_after = Pt(10)
+                
+                score_run = score_para.add_run(f"{score}")
+                score_run.bold = True
+                score_run.font.size = 48  # 字号增加到48pt
             
             # 添加新的一页用于评语
             doc.add_page_break()

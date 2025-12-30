@@ -257,7 +257,7 @@ async def annotate_report(scan_model: AnnotateScanModel):
     批注报告接口
     """
     # 打印接收到的新参数以供调试
-    print(f"接收到批阅请求: 目录='{scan_model.directory}', 增加标志={scan_model.add_markings}, AI审核={scan_model.ai_review}, 自动批分={scan_model.auto_grading}")
+    print(f"接收到批阅请求: 目录='{scan_model.directory}', 增加对号={scan_model.add_markings}, 增加评语={scan_model.ai_review}, 自动批分={scan_model.auto_grading}")
     
     try:
         # 解码目录名称
@@ -273,6 +273,10 @@ async def annotate_report(scan_model: AnnotateScanModel):
         documents_content = []
         failed_reports = []
 
+        # 提前创建graded_reports_dir目录，用于存储临时文件
+        graded_reports_dir = os.path.join(GRADED_DIR, decoded_directory)
+        os.makedirs(graded_reports_dir, exist_ok=True)
+
         # 遍历目录中的所有文件
         for filename in os.listdir(scan_path):
             print(f"正在处理文件: {filename}")
@@ -283,47 +287,97 @@ async def annotate_report(scan_model: AnnotateScanModel):
             # 获取文件扩展名
             ext = os.path.splitext(filename)[1].lower()
             content = ""
-
-            # 提前创建graded_reports_dir目录，用于存储临时文件
-            graded_reports_dir = os.path.join(GRADED_DIR, decoded_directory)
-            os.makedirs(graded_reports_dir, exist_ok=True)
-
-            try:
-                # 先将Word文件转换为PDF，然后从PDF中提取文本
+            base_filename = os.path.splitext(filename)[0]
+            
+            # 检查是否需要调用模型
+            need_ai_processing = scan_model.auto_grading or scan_model.ai_review
+            
+            # 如果只选择了增加对号，不需要调用模型，直接处理
+            if not need_ai_processing and scan_model.add_markings:
+                logger.info(f"只选择了增加对号，不需要调用模型，直接处理: {file_path}")
+                
+                processor = grading_system.document_processors['.pdf']
+                output_ext = '.pdf'
+                final_output_path = os.path.join(graded_reports_dir, f"{base_filename}_graded{output_ext}")
+                
+                # 处理Word文件（转换为PDF后添加对号）
                 if ext in ['.doc', '.docx']:
-                    logger.info(f"正在将Word文件转换为PDF以提取文本: {file_path}")
-                    
                     # 使用WordProcessor转换为PDF
                     word_processor = grading_system.document_processors[ext]
                     
-                    # 构建临时PDF路径
-                    base_filename = os.path.splitext(filename)[0]
-                    temp_pdf_path = os.path.join(graded_reports_dir, f"{base_filename}_temp.pdf")
+                    # 构建转换后的PDF路径
+                    converted_pdf_path = os.path.join(graded_reports_dir, f"{base_filename}_converted.pdf")
                     
                     # 转换为PDF
-                    if not word_processor.convert_to_pdf(file_path, temp_pdf_path):
+                    if not word_processor.convert_to_pdf(file_path, converted_pdf_path):
                         logger.error(f"转换Word文件为PDF失败: {file_path}")
                         continue
                     
-                    # 使用PDF处理器提取文本
-                    pdf_processor = grading_system.document_processors['.pdf']
-                    content = pdf_processor.extract_text(temp_pdf_path)
+                    # 添加对号标注
+                    processor.add_checkmarks(converted_pdf_path, final_output_path)
                     
-                    # 清理临时PDF文件
-                    if os.path.exists(temp_pdf_path):
+                    # 清理临时文件
+                    if os.path.exists(converted_pdf_path):
                         try:
-                            os.remove(temp_pdf_path)
-                        except:
-                            pass
+                            os.remove(converted_pdf_path)
+                        except Exception as e:
+                            logger.warning(f"清理临时文件失败: {e}")
+                # 处理PDF文件（直接添加对号）
                 elif ext == '.pdf':
-                    # 对于PDF文件，直接提取文本
-                    processor = grading_system.document_processors[ext]
-                    content = processor.extract_text(file_path)
+                    # 直接为PDF文件添加对号标注
+                    processor.add_checkmarks(file_path, final_output_path)
                 else:
                     continue  # 跳过不支持的文件类型
+                    
+                # 记录处理结果
+                documents_content.append({
+                    "filename": filename,
+                    "type": "PDF",
+                    "content": "",
+                    "status": "处理完成",
+                    "score": 0,
+                    "comments": "",
+                    "size": os.path.getsize(file_path)
+                })
+                continue
+            
+            # 如果需要调用模型，执行正常流程
+            if need_ai_processing:
+                try:
+                    # 先将Word文件转换为PDF，然后从PDF中提取文本
+                    if ext in ['.doc', '.docx']:
+                        logger.info(f"正在将Word文件转换为PDF以提取文本: {file_path}")
+                        
+                        # 使用WordProcessor转换为PDF
+                        word_processor = grading_system.document_processors[ext]
+                        
+                        # 构建临时PDF路径
+                        temp_pdf_path = os.path.join(graded_reports_dir, f"{base_filename}_temp.pdf")
+                        
+                        # 转换为PDF
+                        if not word_processor.convert_to_pdf(file_path, temp_pdf_path):
+                            logger.error(f"转换Word文件为PDF失败: {file_path}")
+                            continue
+                        
+                        # 使用PDF处理器提取文本
+                        pdf_processor = grading_system.document_processors['.pdf']
+                        content = pdf_processor.extract_text(temp_pdf_path)
+                        
+                        # 清理临时PDF文件
+                        if os.path.exists(temp_pdf_path):
+                            try:
+                                os.remove(temp_pdf_path)
+                            except:
+                                pass
+                    elif ext == '.pdf':
+                        # 对于PDF文件，直接提取文本
+                        processor = grading_system.document_processors[ext]
+                        content = processor.extract_text(file_path)
+                    else:
+                        continue  # 跳过不支持的文件类型
 
-                # 使用ARK大模型评估报告质量
-                prompt = f"""
+                    # 使用ARK大模型评估报告质量
+                    prompt = f"""
                 作为一个大学资深老师
                 请根据以下标准评估实验报告的质量：
                 ---
@@ -342,7 +396,6 @@ async def annotate_report(scan_model: AnnotateScanModel):
                 }}
                 """
 
-                try:
                     # 先进行基本合格性检查
                     is_basic_qualified = len(content) >= 100  # 基本长度检查
 
@@ -517,11 +570,14 @@ async def annotate_report(scan_model: AnnotateScanModel):
                         
                         # 使用PDF处理器添加评语和分数
                         intermediate_file_path = os.path.join(graded_reports_dir, f"{base_filename}_temp{output_ext}")
+                        # 只有当选择了自动批分时才添加分数
+                        add_score = scan_model.auto_grading
                         processor.add_comments_and_score(
                             processing_path,  # 处理的文件路径（可能是转换后的PDF）
                             comments,   # 评语
                             score,      # 分数
-                            intermediate_file_path  # 输出文件路径
+                            intermediate_file_path,  # 输出文件路径
+                            add_score   # 是否添加分数
                         )
                         
                         # 生成最终的graded文件
@@ -571,9 +627,7 @@ async def annotate_report(scan_model: AnnotateScanModel):
                         "size": os.path.getsize(file_path)
                     })
 
-            except Exception as doc_error:
-                print(f"处理文档失败: {str(doc_error)}")
-                continue
+
 
         # 创建综合报告CSV文件，包含所有报告的详细信息
         try:
