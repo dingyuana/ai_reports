@@ -187,6 +187,42 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     /**
+     * 恢复默认评分标准
+     */
+    async function handleCriteriaReset() {
+        if (!confirm('确定要恢复默认评分标准吗？当前修改将丢失。')) {
+            return;
+        }
+
+        criteriaStatusEl.textContent = '恢复中...';
+        criteriaStatusEl.className = 'status-message';
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/criteria/reset`, {
+                method: 'POST',
+            });
+            if (!response.ok) throw new Error('恢复失败');
+            const data = await response.json();
+            criteriaStatusEl.textContent = data.message;
+            criteriaStatusEl.classList.add('success');
+            
+            const getResponse = await fetch(`${API_BASE_URL}/api/criteria`);
+            if (getResponse.ok) {
+                const getData = await getResponse.json();
+                criteriaInputEl.value = getData.criteria;
+            }
+        } catch (error) {
+            criteriaStatusEl.textContent = error.message;
+            criteriaStatusEl.classList.add('error');
+        } finally {
+            setTimeout(() => {
+                criteriaStatusEl.textContent = '';
+                criteriaStatusEl.className = 'status-message';
+            }, 3000);
+        }
+    }
+
+    /**
      * 处理文件上传
      */
     async function handleFileUpload() {
@@ -505,6 +541,7 @@ document.addEventListener('DOMContentLoaded', () => {
     uploadBtn.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', handleFileUpload);
     criteriaFormEl.addEventListener('submit', handleCriteriaSubmit);
+    document.getElementById('reset-criteria-btn').addEventListener('click', handleCriteriaReset);
     submitGradingBtn.addEventListener('click', submitGrading);
 
     // --- 初始加载 ---

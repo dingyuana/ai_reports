@@ -449,6 +449,19 @@ header h1 {
     font-size: 0.85em;
 }
 
+.button.secondary {
+    background-color: #6c757d;
+}
+
+.button.secondary:hover {
+    background-color: #5a6268;
+}
+
+.button-group {
+    display: flex;
+    gap: 0.5rem;
+}
+
 .tree-row.selected {
     background-color: var(--primary-color) !important;
     color: white;

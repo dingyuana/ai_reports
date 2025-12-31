@@ -53,7 +53,10 @@
                             <span>增加评语</span>
                         </label>
                     </div>
-                    <button type="submit" form="criteria-form" class="button small-button">保存标准</button>
+                    <div class="button-group">
+                        <button type="submit" form="criteria-form" class="button small-button">保存标准</button>
+                        <button id="reset-criteria-btn" class="button small-button secondary">恢复默认</button>
+                    </div>
                 </div>
                 <form id="criteria-form">
                     <textarea id="criteria-input" name="criteria" rows="15" placeholder="在此处输入评分标准..."></textarea>

@@ -42,17 +42,67 @@ app.add_middleware(
 REPORTS_DIR = "reports"  # 报告存储目录
 OUTPUT_DIR = "output"  # 输出目录
 GRADED_DIR = "graded_reports"  # 输出目录
+CRITERIA_FILE = "criteria.json"  # 批阅要求存储文件
+
+# 默认评分标准
+DEFAULT_GRADING_CRITERIA = """
+评分标准（总分100分，实际得分范围60-95分）
+1.内容完整性（25分）
+  包含实验目的、步骤、结果等必要部分（15分）
+  实验过程描述清晰，逻辑连贯（10分）
+2.格式规范性（20分）
+  标题、段落、图表等格式规范（10分）
+  图表有标题和说明，引用规范（10分）
+3.内容相关性（20分）
+  内容与实验主题紧密相关（10分）
+  实验结果与实验目的相符（10分）
+4. 原创性（15分）
+  报告内容原创，无抄袭嫌疑（10分）
+  引用他人成果已标明出处（5分）
+5. 非文本内容（20分）
+  配套图片、表格等非文本内容齐全（10分）
+  非文本内容与文本内容紧密结合，有助于理解（10分）
+"""
 
 # 全局变量，用于在内存中存储评分标准
 # 在实际生产环境中，可能会使用数据库或缓存
-GRADING_CRITERIA = """
-1. 内容完整性（是否包含实验目的、步骤、结果等必要部分）
-2. 格式规范性（标题、段落、图表等是否规范）
-3. 内容相关性（内容是否与实验主题相关）
-4. 原创性（是否存在抄袭嫌疑）
-5. 不要求对图片和表格等非文本内容考核
-6. 成绩范围：60-95
-"""
+GRADING_CRITERIA = DEFAULT_GRADING_CRITERIA
+
+
+def load_criteria_from_file():
+    """从文件加载批阅要求"""
+    global GRADING_CRITERIA
+    try:
+        if os.path.exists(CRITERIA_FILE):
+            with open(CRITERIA_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                GRADING_CRITERIA = data.get('criteria', DEFAULT_GRADING_CRITERIA)
+                logger.info(f"已从文件加载批阅要求: {CRITERIA_FILE}")
+        else:
+            logger.info(f"批阅要求文件不存在，使用默认标准")
+    except Exception as e:
+        logger.error(f"加载批阅要求文件失败: {e}")
+        GRADING_CRITERIA = DEFAULT_GRADING_CRITERIA
+
+
+def save_criteria_to_file(criteria: str):
+    """将批阅要求保存到文件"""
+    try:
+        with open(CRITERIA_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'criteria': criteria}, f, ensure_ascii=False, indent=2)
+        logger.info(f"批阅要求已保存到文件: {CRITERIA_FILE}")
+    except Exception as e:
+        logger.error(f"保存批阅要求文件失败: {e}")
+        raise HTTPException(status_code=500, detail=f"保存批阅要求失败: {str(e)}")
+
+
+# 服务器启动时加载批阅要求
+@app.on_event("startup")
+async def startup_event():
+    """服务器启动时执行的操作"""
+    load_criteria_from_file()
+    logger.info("服务器已启动，批阅要求已加载")
+
 
 # 创建评分系统实例
 grading_system = GradingSystem(REPORTS_DIR, OUTPUT_DIR, API_CONFIG)
@@ -154,7 +204,7 @@ async def run_in_threadpool(func, *args, **kwargs):
         )
 
 
-async def invoke_ark_model(prompt: str, model_name: str = "glm-4.5-flash", max_retries: int = 3, timeout: int = 30) -> Optional[str]:
+async def invoke_ark_model(prompt: str, model_name: str = "glm-4.5-flash", max_retries: int = 10, timeout: int = 30) -> Optional[str]:
     """
     调用大模型进行评估，支持重试和超时
 
@@ -337,7 +387,8 @@ async def annotate_report(scan_model: AnnotateScanModel):
                     "status": "处理完成",
                     "score": 0,
                     "comments": "",
-                    "size": os.path.getsize(file_path)
+                    "size": os.path.getsize(file_path),
+                    "ai_failed": False
                 })
                 continue
             
@@ -417,7 +468,8 @@ async def annotate_report(scan_model: AnnotateScanModel):
                                 "score": 50,
                                 "is_qualified": True,
                                 "comments": "无法获取AI评估，使用默认评估",
-                                "reasons": ["AI评估失败"]
+                                "reasons": ["AI评估失败，已重试10次"],
+                                "ai_failed": True
                             }
                         else:
                             try:
@@ -475,6 +527,7 @@ async def annotate_report(scan_model: AnnotateScanModel):
                     is_qualified = evaluation.get("is_qualified", False)
                     comments = evaluation.get("comments", "")
                     reasons = evaluation.get("reasons", [])
+                    ai_failed = evaluation.get("ai_failed", False)
 
                     # 将文件名和内容添加到结果列表
                     documents_content.append({
@@ -484,7 +537,8 @@ async def annotate_report(scan_model: AnnotateScanModel):
                         "status": "合格" if is_qualified else "不合格",
                         "score": score,
                         "comments": comments,
-                        "size": os.path.getsize(file_path)
+                        "size": os.path.getsize(file_path),
+                        "ai_failed": ai_failed
                     })
 
                     # 创建输出子目录
@@ -624,7 +678,8 @@ async def annotate_report(scan_model: AnnotateScanModel):
                         "status": "未知",
                         "score": 0,
                         "comments": "评估过程中出错",
-                        "size": os.path.getsize(file_path)
+                        "size": os.path.getsize(file_path),
+                        "ai_failed": False
                     })
 
 
@@ -673,6 +728,13 @@ async def annotate_report(scan_model: AnnotateScanModel):
                     if status == "未知" or status == "不合格":
                         remarks = doc.get('comments', '未能正确识别判断')
                     
+                    # 如果AI评估失败，在备注中标记
+                    if doc.get('ai_failed', False):
+                        if remarks:
+                            remarks += "；AI评估失败（已重试10次）"
+                        else:
+                            remarks = "AI评估失败（已重试10次）"
+                    
                     # 写入CSV行
                     writer.writerow({
                         '学号': student_id,
@@ -708,7 +770,8 @@ async def set_criteria(data: CriteriaModel):
     """设置全局的评分标准"""
     global GRADING_CRITERIA
     GRADING_CRITERIA = data.criteria
-    print(f"新的评分标准已设置: {GRADING_CRITERIA}")
+    save_criteria_to_file(GRADING_CRITERIA)
+    logger.info(f"新的评分标准已设置并保存")
     return {"message": "评分标准已成功更新"}
 
 
@@ -716,6 +779,16 @@ async def set_criteria(data: CriteriaModel):
 async def get_criteria():
     """获取当前的评分标准"""
     return {"criteria": GRADING_CRITERIA}
+
+
+@app.post("/api/criteria/reset")
+async def reset_criteria():
+    """恢复默认的评分标准"""
+    global GRADING_CRITERIA
+    GRADING_CRITERIA = DEFAULT_GRADING_CRITERIA
+    save_criteria_to_file(GRADING_CRITERIA)
+    logger.info(f"已恢复默认评分标准")
+    return {"message": "评分标准已恢复为默认值"}
 
 
 @app.post("/api/upload")

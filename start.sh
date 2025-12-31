@@ -80,8 +80,10 @@ echo ""
 mkdir -p logs
 
 # 使用uv run启动FastAPI应用（后台运行）
-nohup uv run uvicorn api_server:app --host 0.0.0.0 --port 8000 --reload > logs/server.log 2>&1 &
-SERVER_PID=$!
+# nohup uv run uvicorn api_server:app --host 0.0.0.0 --port 8000 --reload > logs/server.log 2>&1 &
+# SERVER_PID=$!
+uv run uvicorn api_server:app --host 0.0.0.0 --port 8000 
+
 
 # 保存PID到文件
 echo $SERVER_PID > logs/server.pid
