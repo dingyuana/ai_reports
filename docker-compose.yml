@@ -6,6 +6,14 @@ services:
     container_name: ai_report_app
     ports:
       - "7654:7654"
+    env_file:
+      - .env
+    environment:
+      - PORT=7654
+      - REPORTS_DIR=/app/student_reports
+      - OUTPUT_DIR=/app/graded_reports
+      - TEMP_DIR=/app/tmp
+      - LOGS_DIR=/app/logs
     volumes:
       - ai_report_student_reports:/app/student_reports
       - ai_report_graded_reports:/app/graded_reports
@@ -16,6 +24,7 @@ services:
       - /app/tmp:size=512m   # 临时缓存目录，用内存挂载，容器停止后自动清空
     networks:
       - grading-network
+    restart: unless-stopped
 
 volumes:
   ai_report_student_reports:

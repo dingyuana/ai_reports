@@ -39,9 +39,6 @@ pydantic==2.5.0
 # File handling
 aiofiles==23.2.1
 
-# Background tasks
-celery==5.3.4
-
 # Security
 cryptography>=41.0.0
 
@@ -51,14 +48,6 @@ psutil==5.9.6
 # Image processing and Chinese font support
 matplotlib==3.8.2
 pillow==10.1.0
-
-# Temporary file management
-pathlib2==2.3.7; python_version < "3.4"
-
-# Testing dependencies (optional, for development)
-pytest==7.4.3
-pytest-asyncio==0.21.1
-docker==6.1.3
 
 # Additional utilities
 typing-extensions==4.8.0

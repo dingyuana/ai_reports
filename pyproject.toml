@@ -9,7 +9,7 @@ description = "AI驱动的实验报告自动批阅系统"
 authors = [{name = "AI Report Team", email = "team@example.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
 
 dependencies = [
     "fastapi==0.104.1",
@@ -40,3 +40,6 @@ dev = [
     "pytest>=7.4.3",
     "pytest-asyncio>=0.21.1",
 ]
+
+[tool.setuptools]
+packages = []
