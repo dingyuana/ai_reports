@@ -140,10 +140,6 @@ class PDFProcessor(DocumentProcessor):
         comment_canvas.setFont("WenQuanYi-ZenHei", 16)  # 使用中文字体，减小标题字号
         comment_canvas.drawString(50, 750, "批阅评语")
         
-        # 添加日期
-        current_date = datetime.now().strftime("%Y-%m-%d")
-        comment_canvas.drawString(50, 720, f"批阅日期: {current_date}")
-        
         # 设置评语内容字体
         comment_canvas.setFont("WenQuanYi-ZenHei", 14)  # 使用中文字体
         
@@ -498,15 +494,6 @@ class WordProcessor(DocumentProcessor):
                 selection.Font.Color = 16711680  # 红色
                 selection.ParagraphFormat.Alignment = 1  # 1=wdAlignParagraphCenter
                 
-                # 添加新段落用于日期
-                selection.TypeParagraph()
-                current_date = datetime.now().strftime("%Y-%m-%d")
-                selection.TypeText(f"批阅日期: {current_date}")
-                selection.Font.Bold = False
-                selection.Font.Size = 16
-                selection.Font.Color = 0  # 黑色
-                selection.ParagraphFormat.Alignment = 1  # 居中
-                
                 # 添加新段落
                 selection.TypeParagraph()
                 selection.ParagraphFormat.Alignment = 0  # 0=wdAlignParagraphLeft
@@ -550,13 +537,6 @@ class WordProcessor(DocumentProcessor):
             title_run.bold = True
             title_run.font.size = 24  # 更大的字号 (24pt)
             title_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-            
-            # 添加日期
-            date_para = doc.add_paragraph()
-            current_date = datetime.now().strftime("%Y-%m-%d")
-            date_run = date_para.add_run(f"批阅日期: {current_date}")
-            date_run.font.size = 14  # 14pt字号
-            date_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
             
             # 添加评语内容，确保正确处理中文换行
             comments_para = doc.add_paragraph()

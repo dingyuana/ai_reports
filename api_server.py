@@ -847,10 +847,10 @@ async def annotate_report(scan_model: AnnotateScanModel):
 
         print(f"共找到 {len(files_to_process)} 个文件需要处理")
 
-        # 使用线程池并行处理文件，使用3个线程
+        # 使用线程池并行处理文件，使用10个线程
         # 每个线程独立处理一个完整的文件（包括文件处理和大模型调用）
         # 线程间任务互不干涉，避免API速率限制和资源压力
-        with ThreadPoolExecutor(max_workers=3) as executor:
+        with ThreadPoolExecutor(max_workers=10) as executor:
             # 提交所有任务到线程池
             future_to_file = {
                 executor.submit(
