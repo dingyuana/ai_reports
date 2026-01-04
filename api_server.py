@@ -2,12 +2,14 @@ import os
 import json
 import csv
 import logging
+import time
 from datetime import datetime
 from urllib.parse import unquote
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from grading_system import GradingSystem
 from zai import ZhipuAiClient
 from config import API_CONFIG
@@ -214,7 +216,7 @@ class AnnotateScanModel(BaseModel):
     add_markings: bool
     ai_review: bool
     auto_grading: bool
-    selected_model: str = "glm-4.5-flash"
+    selected_model: str = "Qwen/QwQ-32B"
 
 
 import asyncio
@@ -230,7 +232,7 @@ async def run_in_threadpool(func, *args, **kwargs):
         )
 
 
-async def invoke_ark_model(prompt: str, model_name: str = "glm-4.5-flash", max_retries: int = 10, timeout: int = 30) -> Optional[str]:
+async def invoke_ark_model(prompt: str, model_name: str = "Qwen/QwQ-32B", max_retries: int = 10, timeout: int = 120) -> Optional[str]:
     """
     调用大模型进行评估，支持重试和超时
 
@@ -250,7 +252,7 @@ async def invoke_ark_model(prompt: str, model_name: str = "glm-4.5-flash", max_r
             # 定义同步调用函数
             def sync_call():
                 # 根据模型名称选择不同的调用方式
-                if model_name in ["thudm/glm-z1-9b-0414", "qwen/qwen3-8b", "zai-org/GLM-4.6V"]:
+                if model_name in ["thudm/glm-z1-9b-0414", "qwen/qwen3-8b", "Qwen/QwQ-32B"]:
                     # 调用硅基流动API
                     import requests
                     
@@ -327,10 +329,485 @@ async def invoke_ark_model(prompt: str, model_name: str = "glm-4.5-flash", max_r
     return None  # 不应该到达这里，但为了安全起见
 
 
+def convert_word_to_pdf_with_retry(word_processor, word_path: str, pdf_path: str, max_retries: int = 3) -> bool:
+    """
+    带重试机制的Word转PDF函数
+    
+    Args:
+        word_processor: Word处理器实例
+        word_path: Word文件路径
+        pdf_path: 输出的PDF文件路径
+        max_retries: 最大重试次数，默认3次
+        
+    Returns:
+        转换成功返回True，失败返回False
+    """
+    for attempt in range(max_retries):
+        try:
+            print(f"尝试转换Word文件为PDF (尝试 {attempt + 1}/{max_retries}): {word_path}")
+            
+            # 尝试转换
+            result = word_processor.convert_to_pdf(word_path, pdf_path)
+            
+            if result:
+                print(f"Word文件转换成功: {word_path} -> {pdf_path}")
+                return True
+            else:
+                print(f"Word文件转换失败 (尝试 {attempt + 1}/{max_retries})")
+                
+                # 如果不是最后一次尝试，等待后重试
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # 1, 2, 4...秒
+                    print(f"等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
+                    
+        except Exception as e:
+            print(f"Word文件转换异常 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+            
+            # 如果不是最后一次尝试，等待后重试
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # 1, 2, 4...秒
+                print(f"等待 {wait_time} 秒后重试...")
+                time.sleep(wait_time)
+    
+    print(f"Word文件转换失败，已达到最大重试次数 {max_retries}: {word_path}")
+    return False
+
+
+def process_single_file(
+    filename: str,
+    file_path: str,
+    scan_path: str,
+    decoded_directory: str,
+    graded_reports_dir: str,
+    output_subdir: str,
+    scan_model: AnnotateScanModel,
+    qualified_csv_lock: Any
+) -> Dict[str, Any]:
+    """
+    处理单个文件的函数，用于多线程并行处理
+    
+    Args:
+        filename: 文件名
+        file_path: 文件完整路径
+        scan_path: 扫描目录路径
+        decoded_directory: 解码后的目录名称
+        graded_reports_dir: 批阅后的报告目录
+        output_subdir: 输出子目录
+        scan_model: 批阅模型配置
+        qualified_csv_lock: CSV文件写入锁
+        
+    Returns:
+        处理结果字典
+    """
+    print(f"正在处理文件: {filename}")
+    
+    # 获取文件扩展名
+    ext = os.path.splitext(filename)[1].lower()
+    content = ""
+    base_filename = os.path.splitext(filename)[0]
+    
+    # 检查是否需要调用模型
+    need_ai_processing = scan_model.auto_grading or scan_model.ai_review
+    
+    # 如果只选择了增加对号，不需要调用模型，直接处理
+    if not need_ai_processing and scan_model.add_markings:
+        logger.info(f"只选择了增加对号，不需要调用模型，直接处理: {file_path}")
+        
+        processor = grading_system.document_processors['.pdf']
+        output_ext = '.pdf'
+        final_output_path = os.path.join(graded_reports_dir, f"{base_filename}_graded{output_ext}")
+        
+        # 处理Word文件（转换为PDF后添加对号）
+        if ext in ['.doc', '.docx']:
+            # 使用WordProcessor转换为PDF
+            word_processor = grading_system.document_processors[ext]
+            
+            # 构建转换后的PDF路径
+            converted_pdf_path = os.path.join(graded_reports_dir, f"{base_filename}_converted.pdf")
+            
+            # 转换为PDF（带重试机制，最多重试3次）
+            if not convert_word_to_pdf_with_retry(word_processor, file_path, converted_pdf_path, max_retries=3):
+                logger.error(f"转换Word文件为PDF失败: {file_path}")
+                return {
+                    "filename": filename,
+                    "type": "Word",
+                    "content": "",
+                    "status": "处理失败",
+                    "score": 0,
+                    "comments": "转换失败（已重试3次）",
+                    "size": os.path.getsize(file_path),
+                    "ai_failed": False
+                }
+            
+            # 添加对号标注
+            processor.add_checkmarks(converted_pdf_path, final_output_path)
+            
+            # 清理临时文件
+            if os.path.exists(converted_pdf_path):
+                try:
+                    os.remove(converted_pdf_path)
+                except Exception as e:
+                    logger.warning(f"清理临时文件失败: {e}")
+        # 处理PDF文件（直接添加对号）
+        elif ext == '.pdf':
+            # 直接为PDF文件添加对号标注
+            processor.add_checkmarks(file_path, final_output_path)
+        else:
+            return {
+                "filename": filename,
+                "type": "Unknown",
+                "content": "",
+                "status": "不支持",
+                "score": 0,
+                "comments": "不支持的文件类型",
+                "size": os.path.getsize(file_path),
+                "ai_failed": False
+            }
+            
+        # 记录处理结果
+        return {
+            "filename": filename,
+            "type": "PDF",
+            "content": "",
+            "status": "处理完成",
+            "score": 0,
+            "comments": "",
+            "size": os.path.getsize(file_path),
+            "ai_failed": False
+        }
+    
+    # 如果需要调用模型，执行正常流程
+    if need_ai_processing:
+        try:
+            # 先将Word文件转换为PDF，然后从PDF中提取文本
+            if ext in ['.doc', '.docx']:
+                logger.info(f"正在将Word文件转换为PDF以提取文本: {file_path}")
+                
+                # 使用WordProcessor转换为PDF
+                word_processor = grading_system.document_processors[ext]
+                
+                # 构建临时PDF路径
+                temp_pdf_path = os.path.join(graded_reports_dir, f"{base_filename}_temp.pdf")
+                
+                # 转换为PDF（带重试机制，最多重试3次）
+                if not convert_word_to_pdf_with_retry(word_processor, file_path, temp_pdf_path, max_retries=3):
+                    logger.error(f"转换Word文件为PDF失败: {file_path}")
+                    return {
+                        "filename": filename,
+                        "type": "Word",
+                        "content": "",
+                        "status": "转换失败",
+                        "score": 0,
+                        "comments": "转换失败（已重试3次）",
+                        "size": os.path.getsize(file_path),
+                        "ai_failed": False
+                    }
+                
+                # 使用PDF处理器提取文本
+                pdf_processor = grading_system.document_processors['.pdf']
+                content = pdf_processor.extract_text(temp_pdf_path)
+                
+                # 清理临时PDF文件
+                if os.path.exists(temp_pdf_path):
+                    try:
+                        os.remove(temp_pdf_path)
+                    except:
+                        pass
+            elif ext == '.pdf':
+                # 对于PDF文件，直接提取文本
+                processor = grading_system.document_processors[ext]
+                content = processor.extract_text(file_path)
+            else:
+                return {
+                    "filename": filename,
+                    "type": "Unknown",
+                    "content": "",
+                    "status": "不支持",
+                    "score": 0,
+                    "comments": "不支持的文件类型",
+                    "size": os.path.getsize(file_path),
+                    "ai_failed": False
+                }
+
+            # 使用ARK大模型评估报告质量
+            prompt = f"""
+        作为一个大学资深老师
+        请根据以下标准评估实验报告的质量：
+        ---
+        {GRADING_CRITERIA}
+        ---
+
+        报告内容：
+        {content[:4000]}  # 限制内容长度以避免超过模型限制
+
+        请给出评估结果，格式为JSON:
+        {{
+            "score": 0-100的评分,
+            "is_qualified": true/false,
+            "comments": "具体的评估意见",
+            "reasons": ["不合格原因1", "不合格原因2"]
+        }}
+        """
+
+            # 先进行基本合格性检查
+            is_basic_qualified = len(content) >= 100  # 基本长度检查
+
+            if not is_basic_qualified:
+                # 如果不合格，直接记录结果
+                evaluation = {
+                    "score": 0,
+                    "is_qualified": False,
+                    "comments": "报告内容过短，未达到基本要求",
+                    "reasons": ["内容长度不足"]
+                }
+            else:
+                # 如果基本合格，再调用ARK模型进行详细评估
+                # 注意：这里需要同步调用，因为在线程池中不能使用async
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    response = loop.run_until_complete(invoke_ark_model(prompt, model_name=scan_model.selected_model))
+                finally:
+                    loop.close()
+                
+                print(f"ARK模型评估结果: {response}")
+
+                if response is None:
+                    evaluation = {
+                        "score": 50,
+                        "is_qualified": True,
+                        "comments": "无法获取AI评估，使用默认评估",
+                        "reasons": ["AI评估失败，已重试10次"],
+                        "ai_failed": True
+                    }
+                else:
+                    try:
+                        # 尝试直接解析JSON
+                        evaluation = json.loads(response)
+                    except json.JSONDecodeError:
+                        print(f"无法解析AI模型响应为JSON: {response}")
+                        # 尝试提取文本中的关键信息
+                        try:
+                            # 简单的规则匹配，提取分数和评语
+                            import re
+                            
+                            # 尝试从响应中提取分数
+                            score_match = re.search(r'"score"\s*:\s*(\d+)', response) or re.search(r'分数[:：]\s*(\d+)', response)
+                            score = int(score_match.group(1)) if score_match else 75  # 默认分数
+                            
+                            # 尝试从响应中提取评语
+                            comments_match = re.search(r'"comments"\s*:\s*"([^"]+)"', response) or re.search(r'评语[:：]\s*([^\n]+)', response)
+                            comments = comments_match.group(1) if comments_match else "AI评估通过，整体表现良好。"  # 默认评语
+                            
+                            # 尝试从响应中提取合格状态
+                            is_qualified = True
+                            if "不合格" in response or "不通过" in response:
+                                is_qualified = False
+                            
+                            # 尝试从响应中提取原因
+                            reasons = []
+                            reasons_match = re.search(r'"reasons"\s*:\s*\[([^\]]+)\]', response)
+                            if reasons_match:
+                                reasons_str = reasons_match.group(1)
+                                reasons = [reason.strip(' "') for reason in reasons_str.split(',')]
+                            elif not is_qualified:
+                                reasons = ["AI评估不通过"]
+                            
+                            # 构建评估结果
+                            evaluation = {
+                                "score": score,
+                                "is_qualified": is_qualified,
+                                "comments": comments,
+                                "reasons": reasons
+                            }
+                            print(f"使用提取的评估结果: {evaluation}")
+                        except Exception as e:
+                            print(f"提取AI评估结果失败: {e}")
+                            # 如果提取也失败，使用默认评估
+                            evaluation = {
+                                "score": 75,
+                                "is_qualified": True,
+                                "comments": "AI评估通过，整体表现良好。",
+                                "reasons": []
+                            }
+
+            # 获取评估结果
+            score = evaluation.get("score", 0)
+            is_qualified = evaluation.get("is_qualified", False)
+            comments = evaluation.get("comments", "")
+            reasons = evaluation.get("reasons", [])
+            ai_failed = evaluation.get("ai_failed", False)
+
+            # 保存评估结果到JSON文件
+            base_filename = os.path.splitext(filename)[0]  # 移除文件扩展名
+            json_path = os.path.join(output_subdir, f"{base_filename}.json")
+            with open(json_path, 'w', encoding='utf-8') as json_file:
+                json.dump({
+                    "filename": filename,
+                    "score": score,
+                    "is_qualified": is_qualified,
+                    "comments": comments,
+                    "reasons": reasons,
+                    "timestamp": datetime.now().isoformat()
+                }, json_file, ensure_ascii=False, indent=2)
+
+            # 记录合格报告到CSV文件（使用锁保证线程安全）
+            parts = filename.split('-')
+            print(f"文件名称: {parts}")
+            if len(parts) >= 3:
+                class_name = parts[0]  # 班级
+                student_id = parts[1]  # 学号
+                user_name = parts[2].split('.')[0]  # 姓名
+            else:
+                user_name = filename.split('.')[0]
+                student_id = user_name  # 假设学号是文件名前缀
+                class_name  = user_name # 假设姓名是文件名前缀
+            print(f"班级: {class_name}, 学号: {student_id}, 姓名: {user_name}")
+            
+            qualified_csv_path = os.path.join(output_subdir, "合格报告分数.csv")
+            
+            with qualified_csv_lock:
+                file_exists = os.path.exists(qualified_csv_path)
+                with open(qualified_csv_path, 'a', newline='', encoding='utf-8-sig') as csvfile:
+                    fieldnames = ['学号', '姓名', '分数']
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+                    if not file_exists:
+                        writer.writeheader()
+
+                    writer.writerow({
+                        '学号': student_id,
+                        '姓名': user_name,
+                        '分数': score
+                    })
+            
+            # 为PDF和Word文档都生成批阅后的文件（目录已提前创建）
+            
+            if ext in ['.pdf', '.doc', '.docx']:
+                # 对于Word文件，先转换为PDF，然后统一使用PDF处理器处理
+                if ext in ['.doc', '.docx']:
+                    logger.info(f"正在将Word文件转换为PDF: {file_path}")
+                    
+                    # 使用WordProcessor转换为PDF
+                    word_processor = grading_system.document_processors[ext]
+                    
+                    # 构建转换后的PDF路径
+                    converted_pdf_path = os.path.join(graded_reports_dir, f"{base_filename}_converted.pdf")
+                    
+                    # 转换为PDF（带重试机制，最多重试3次）
+                    if not convert_word_to_pdf_with_retry(word_processor, file_path, converted_pdf_path, max_retries=3):
+                        logger.error(f"转换Word文件为PDF失败: {file_path}")
+                        return {
+                            "filename": filename,
+                            "type": "Word",
+                            "content": content[:5000],
+                            "status": "转换失败",
+                            "score": 0,
+                            "comments": "转换失败（已重试3次）",
+                            "size": os.path.getsize(file_path),
+                            "ai_failed": False
+                        }
+                    
+                    # 切换到PDF处理器和转换后的PDF路径
+                    processor = grading_system.document_processors['.pdf']
+                    processing_path = converted_pdf_path
+                    output_ext = '.pdf'  # 最终输出为PDF
+                else:
+                    # 对于PDF文件，直接使用
+                    processor = grading_system.document_processors[ext]
+                    processing_path = file_path
+                    output_ext = '.pdf'
+                
+                # 使用PDF处理器添加评语和分数
+                intermediate_file_path = os.path.join(graded_reports_dir, f"{base_filename}_temp{output_ext}")
+                # 只有当选择了自动批分时才添加分数
+                add_score = scan_model.auto_grading
+                processor.add_comments_and_score(
+                    processing_path,  # 处理的文件路径（可能是转换后的PDF）
+                    comments,   # 评语
+                    score,      # 分数
+                    intermediate_file_path,  # 输出文件路径
+                    add_score   # 是否添加分数
+                )
+                
+                # 生成最终的graded文件
+                final_output_path = os.path.join(graded_reports_dir, f"{base_filename}_graded{output_ext}")
+                
+                if scan_model.add_markings:
+                    # 如果需要添加对号标注，生成最终文件
+                    processor.add_checkmarks(intermediate_file_path, final_output_path)
+                else:
+                    # 如果不需要添加对号标注，直接重命名为graded文件
+                    os.rename(intermediate_file_path, final_output_path)
+                
+                # 清理临时文件
+                if os.path.exists(intermediate_file_path):
+                    try:
+                        os.remove(intermediate_file_path)
+                        logger.info(f"已清理临时文件: {intermediate_file_path}")
+                    except Exception as e:
+                        logger.warning(f"清理临时文件失败: {e}")
+                
+                # 清理转换后的PDF临时文件
+                if ext in ['.doc', '.docx'] and os.path.exists(converted_pdf_path):
+                    try:
+                        os.remove(converted_pdf_path)
+                        logger.info(f"已清理临时转换文件: {converted_pdf_path}")
+                    except Exception as e:
+                        logger.warning(f"清理临时转换文件失败: {e}")
+                
+                # 确保只保留最终的graded文件，删除可能存在的旧文件
+                old_file_path = os.path.join(graded_reports_dir, f"{base_filename}{output_ext}")
+                if os.path.exists(old_file_path):
+                    try:
+                        os.remove(old_file_path)
+                        logger.info(f"已清理旧文件: {old_file_path}")
+                    except Exception as e:
+                        logger.warning(f"清理旧文件失败: {e}")
+
+            # 返回处理结果
+            return {
+                "filename": filename,
+                "type": "PDF" if ext == '.pdf' else "Word",
+                "content": content[:5000],
+                "status": "合格" if is_qualified else "不合格",
+                "score": score,
+                "comments": comments,
+                "size": os.path.getsize(file_path),
+                "ai_failed": ai_failed
+            }
+
+        except Exception as e:
+            print(f"评估过程中出错: {str(e)}")
+            return {
+                "filename": filename,
+                "type": "PDF" if ext == '.pdf' else "Word",
+                "content": content[:500],
+                "status": "未知",
+                "score": 0,
+                "comments": "评估过程中出错",
+                "size": os.path.getsize(file_path),
+                "ai_failed": False
+            }
+    
+    return {
+        "filename": filename,
+        "type": "Unknown",
+        "content": "",
+        "status": "未处理",
+        "score": 0,
+        "comments": "",
+        "size": os.path.getsize(file_path),
+        "ai_failed": False
+    }
+
+
 @app.post("/api/annotate")
 async def annotate_report(scan_model: AnnotateScanModel):
     """
-    批注报告接口
+    批注报告接口 - 使用多线程并行处理
     """
     # 打印接收到的新参数以供调试
     print(f"接收到批阅请求: 目录='{scan_model.directory}', 增加对号={scan_model.add_markings}, 增加评语={scan_model.ai_review}, 自动批分={scan_model.auto_grading}")
@@ -353,357 +830,69 @@ async def annotate_report(scan_model: AnnotateScanModel):
         graded_reports_dir = os.path.join(GRADED_DIR, decoded_directory)
         os.makedirs(graded_reports_dir, exist_ok=True)
 
-        # 遍历目录中的所有文件
+        # 创建输出子目录
+        output_subdir = os.path.join(OUTPUT_DIR, decoded_directory)
+        os.makedirs(output_subdir, exist_ok=True)
+
+        # 创建线程锁，用于CSV文件写入的线程安全
+        import threading
+        qualified_csv_lock = threading.Lock()
+
+        # 收集所有需要处理的文件
+        files_to_process = []
         for filename in os.listdir(scan_path):
-            print(f"正在处理文件: {filename}")
             file_path = os.path.join(scan_path, filename)
-            if not os.path.isfile(file_path):
-                continue
+            if os.path.isfile(file_path):
+                files_to_process.append((filename, file_path))
 
-            # 获取文件扩展名
-            ext = os.path.splitext(filename)[1].lower()
-            content = ""
-            base_filename = os.path.splitext(filename)[0]
-            
-            # 检查是否需要调用模型
-            need_ai_processing = scan_model.auto_grading or scan_model.ai_review
-            
-            # 如果只选择了增加对号，不需要调用模型，直接处理
-            if not need_ai_processing and scan_model.add_markings:
-                logger.info(f"只选择了增加对号，不需要调用模型，直接处理: {file_path}")
-                
-                processor = grading_system.document_processors['.pdf']
-                output_ext = '.pdf'
-                final_output_path = os.path.join(graded_reports_dir, f"{base_filename}_graded{output_ext}")
-                
-                # 处理Word文件（转换为PDF后添加对号）
-                if ext in ['.doc', '.docx']:
-                    # 使用WordProcessor转换为PDF
-                    word_processor = grading_system.document_processors[ext]
-                    
-                    # 构建转换后的PDF路径
-                    converted_pdf_path = os.path.join(graded_reports_dir, f"{base_filename}_converted.pdf")
-                    
-                    # 转换为PDF
-                    if not word_processor.convert_to_pdf(file_path, converted_pdf_path):
-                        logger.error(f"转换Word文件为PDF失败: {file_path}")
-                        continue
-                    
-                    # 添加对号标注
-                    processor.add_checkmarks(converted_pdf_path, final_output_path)
-                    
-                    # 清理临时文件
-                    if os.path.exists(converted_pdf_path):
-                        try:
-                            os.remove(converted_pdf_path)
-                        except Exception as e:
-                            logger.warning(f"清理临时文件失败: {e}")
-                # 处理PDF文件（直接添加对号）
-                elif ext == '.pdf':
-                    # 直接为PDF文件添加对号标注
-                    processor.add_checkmarks(file_path, final_output_path)
-                else:
-                    continue  # 跳过不支持的文件类型
-                    
-                # 记录处理结果
-                documents_content.append({
-                    "filename": filename,
-                    "type": "PDF",
-                    "content": "",
-                    "status": "处理完成",
-                    "score": 0,
-                    "comments": "",
-                    "size": os.path.getsize(file_path),
-                    "ai_failed": False
-                })
-                continue
-            
-            # 如果需要调用模型，执行正常流程
-            if need_ai_processing:
+        print(f"共找到 {len(files_to_process)} 个文件需要处理")
+
+        # 使用线程池并行处理文件，使用3个线程
+        # 每个线程独立处理一个完整的文件（包括文件处理和大模型调用）
+        # 线程间任务互不干涉，避免API速率限制和资源压力
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            # 提交所有任务到线程池
+            future_to_file = {
+                executor.submit(
+                    process_single_file,
+                    filename,
+                    file_path,
+                    scan_path,
+                    decoded_directory,
+                    graded_reports_dir,
+                    output_subdir,
+                    scan_model,
+                    qualified_csv_lock
+                ): (filename, file_path)
+                for filename, file_path in files_to_process
+            }
+
+            # 收集处理结果
+            for future in as_completed(future_to_file):
+                filename, file_path = future_to_file[future]
                 try:
-                    # 先将Word文件转换为PDF，然后从PDF中提取文本
-                    if ext in ['.doc', '.docx']:
-                        logger.info(f"正在将Word文件转换为PDF以提取文本: {file_path}")
-                        
-                        # 使用WordProcessor转换为PDF
-                        word_processor = grading_system.document_processors[ext]
-                        
-                        # 构建临时PDF路径
-                        temp_pdf_path = os.path.join(graded_reports_dir, f"{base_filename}_temp.pdf")
-                        
-                        # 转换为PDF
-                        if not word_processor.convert_to_pdf(file_path, temp_pdf_path):
-                            logger.error(f"转换Word文件为PDF失败: {file_path}")
-                            continue
-                        
-                        # 使用PDF处理器提取文本
-                        pdf_processor = grading_system.document_processors['.pdf']
-                        content = pdf_processor.extract_text(temp_pdf_path)
-                        
-                        # 清理临时PDF文件
-                        if os.path.exists(temp_pdf_path):
-                            try:
-                                os.remove(temp_pdf_path)
-                            except:
-                                pass
-                    elif ext == '.pdf':
-                        # 对于PDF文件，直接提取文本
-                        processor = grading_system.document_processors[ext]
-                        content = processor.extract_text(file_path)
-                    else:
-                        continue  # 跳过不支持的文件类型
-
-                    # 使用ARK大模型评估报告质量
-                    prompt = f"""
-                作为一个大学资深老师
-                请根据以下标准评估实验报告的质量：
-                ---
-                {GRADING_CRITERIA}
-                ---
-
-                报告内容：
-                {content[:4000]}  # 限制内容长度以避免超过模型限制
-
-                请给出评估结果，格式为JSON:
-                {{
-                    "score": 0-100的评分,
-                    "is_qualified": true/false,
-                    "comments": "具体的评估意见",
-                    "reasons": ["不合格原因1", "不合格原因2"]
-                }}
-                """
-
-                    # 先进行基本合格性检查
-                    is_basic_qualified = len(content) >= 100  # 基本长度检查
-
-                    if not is_basic_qualified:
-                        # 如果不合格，直接记录结果
-                        evaluation = {
-                            "score": 0,
-                            "is_qualified": False,
-                            "comments": "报告内容过短，未达到基本要求",
-                            "reasons": ["内容长度不足"]
-                        }
-                    else:
-                        # 如果基本合格，再调用ARK模型进行详细评估
-                        response = await invoke_ark_model(prompt, model_name=scan_model.selected_model)
-                        print(f"ARK模型评估结果: {response}")
-
-                        if response is None:
-                            evaluation = {
-                                "score": 50,
-                                "is_qualified": True,
-                                "comments": "无法获取AI评估，使用默认评估",
-                                "reasons": ["AI评估失败，已重试10次"],
-                                "ai_failed": True
-                            }
-                        else:
-                            try:
-                                # 尝试直接解析JSON
-                                evaluation = json.loads(response)
-                            except json.JSONDecodeError:
-                                print(f"无法解析AI模型响应为JSON: {response}")
-                                # 尝试提取文本中的关键信息
-                                try:
-                                    # 简单的规则匹配，提取分数和评语
-                                    import re
-                                    
-                                    # 尝试从响应中提取分数
-                                    score_match = re.search(r'"score"\s*:\s*(\d+)', response) or re.search(r'分数[:：]\s*(\d+)', response)
-                                    score = int(score_match.group(1)) if score_match else 75  # 默认分数
-                                    
-                                    # 尝试从响应中提取评语
-                                    comments_match = re.search(r'"comments"\s*:\s*"([^"]+)"', response) or re.search(r'评语[:：]\s*([^\n]+)', response)
-                                    comments = comments_match.group(1) if comments_match else "AI评估通过，整体表现良好。"  # 默认评语
-                                    
-                                    # 尝试从响应中提取合格状态
-                                    is_qualified = True
-                                    if "不合格" in response or "不通过" in response:
-                                        is_qualified = False
-                                    
-                                    # 尝试从响应中提取原因
-                                    reasons = []
-                                    reasons_match = re.search(r'"reasons"\s*:\s*\[([^\]]+)\]', response)
-                                    if reasons_match:
-                                        reasons_str = reasons_match.group(1)
-                                        reasons = [reason.strip(' "') for reason in reasons_str.split(',')]
-                                    elif not is_qualified:
-                                        reasons = ["AI评估不通过"]
-                                    
-                                    # 构建评估结果
-                                    evaluation = {
-                                        "score": score,
-                                        "is_qualified": is_qualified,
-                                        "comments": comments,
-                                        "reasons": reasons
-                                    }
-                                    print(f"使用提取的评估结果: {evaluation}")
-                                except Exception as e:
-                                    print(f"提取AI评估结果失败: {e}")
-                                    # 如果提取也失败，使用默认评估
-                                    evaluation = {
-                                        "score": 75,
-                                        "is_qualified": True,
-                                        "comments": "AI评估通过，整体表现良好。",
-                                        "reasons": []
-                                    }
-
-                    # 获取评估结果
-                    score = evaluation.get("score", 0)
-                    is_qualified = evaluation.get("is_qualified", False)
-                    comments = evaluation.get("comments", "")
-                    reasons = evaluation.get("reasons", [])
-                    ai_failed = evaluation.get("ai_failed", False)
-
-                    # 将文件名和内容添加到结果列表
-                    documents_content.append({
-                        "filename": filename,
-                        "type": "PDF" if ext == '.pdf' else "Word",
-                        "content": content[:5000],
-                        "status": "合格" if is_qualified else "不合格",
-                        "score": score,
-                        "comments": comments,
-                        "size": os.path.getsize(file_path),
-                        "ai_failed": ai_failed
-                    })
-
-                    # 创建输出子目录
-                    output_subdir = os.path.join(OUTPUT_DIR, decoded_directory)
-                    os.makedirs(output_subdir, exist_ok=True)
-
-                    # 保存评估结果到JSON文件
-                    base_filename = os.path.splitext(filename)[0]  # 移除文件扩展名
-                    json_path = os.path.join(output_subdir, f"{base_filename}.json")
-                    with open(json_path, 'w', encoding='utf-8') as json_file:
-                        json.dump({
-                            "filename": filename,
-                            "score": score,
-                            "is_qualified": is_qualified,
-                            "comments": comments,
-                            "reasons": reasons,
-                            "timestamp": datetime.now().isoformat()
-                        }, json_file, ensure_ascii=False, indent=2)
-
+                    result = future.result()
+                    documents_content.append(result)
+                    
                     # 记录不合格报告
-                    if not is_qualified:
+                    if result.get("status") == "不合格":
                         user_name = filename.split('_')[0] if '_' in filename else filename.split('.')[0]
                         failed_reports.append({
                             "username": user_name,
                             "status": "不合格",
                             "filename": filename
                         })
-
-                    # 记录合格报告到CSV文件
-                    parts = filename.split('-')
-                    print(f"文件名称: {parts}")
-                    if len(parts) >= 3:
-                        class_name = parts[0]  # 班级
-                        student_id = parts[1]  # 学号
-                        user_name = parts[2].split('.')[0]  # 姓名
-                    else:
-                        user_name = filename.split('.')[0]
-                        student_id = user_name  # 假设学号是文件名前缀
-                        class_name  = user_name # 假设姓名是文件名前缀
-                    print(f"班级: {class_name}, 学号: {student_id}, 姓名: {user_name}")
-                    qualified_csv_path = os.path.join(output_subdir, "合格报告分数.csv")
-                    file_exists = os.path.exists(qualified_csv_path)
-
-                    with open(qualified_csv_path, 'a', newline='', encoding='utf-8-sig') as csvfile:
-                        fieldnames = ['学号', '姓名', '分数']
-                        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
-                        if not file_exists:
-                            writer.writeheader()
-
-                        writer.writerow({
-                            '学号': student_id,
-                            '姓名': user_name,
-                            '分数': score
-                        })
-                    # 为PDF和Word文档都生成批阅后的文件（目录已提前创建）
                     
-                    if ext in ['.pdf', '.doc', '.docx']:
-                        # 对于Word文件，先转换为PDF，然后统一使用PDF处理器处理
-                        if ext in ['.doc', '.docx']:
-                            logger.info(f"正在将Word文件转换为PDF: {file_path}")
-                            
-                            # 使用WordProcessor转换为PDF
-                            word_processor = grading_system.document_processors[ext]
-                            
-                            # 构建转换后的PDF路径
-                            converted_pdf_path = os.path.join(graded_reports_dir, f"{base_filename}_converted.pdf")
-                            
-                            # 转换为PDF
-                            if not word_processor.convert_to_pdf(file_path, converted_pdf_path):
-                                logger.error(f"转换Word文件为PDF失败: {file_path}")
-                                continue
-                            
-                            # 切换到PDF处理器和转换后的PDF路径
-                            processor = grading_system.document_processors['.pdf']
-                            processing_path = converted_pdf_path
-                            output_ext = '.pdf'  # 最终输出为PDF
-                        else:
-                            # 对于PDF文件，直接使用
-                            processor = grading_system.document_processors[ext]
-                            processing_path = file_path
-                            output_ext = '.pdf'
-                        
-                        # 使用PDF处理器添加评语和分数
-                        intermediate_file_path = os.path.join(graded_reports_dir, f"{base_filename}_temp{output_ext}")
-                        # 只有当选择了自动批分时才添加分数
-                        add_score = scan_model.auto_grading
-                        processor.add_comments_and_score(
-                            processing_path,  # 处理的文件路径（可能是转换后的PDF）
-                            comments,   # 评语
-                            score,      # 分数
-                            intermediate_file_path,  # 输出文件路径
-                            add_score   # 是否添加分数
-                        )
-                        
-                        # 生成最终的graded文件
-                        final_output_path = os.path.join(graded_reports_dir, f"{base_filename}_graded{output_ext}")
-                        
-                        if scan_model.add_markings:
-                            # 如果需要添加对号标注，生成最终文件
-                            processor.add_checkmarks(intermediate_file_path, final_output_path)
-                        else:
-                            # 如果不需要添加对号标注，直接重命名为graded文件
-                            os.rename(intermediate_file_path, final_output_path)
-                        
-                        # 清理临时文件
-                        if os.path.exists(intermediate_file_path):
-                            try:
-                                os.remove(intermediate_file_path)
-                                logger.info(f"已清理临时文件: {intermediate_file_path}")
-                            except Exception as e:
-                                logger.warning(f"清理临时文件失败: {e}")
-                        
-                        # 清理转换后的PDF临时文件
-                        if ext in ['.doc', '.docx'] and os.path.exists(converted_pdf_path):
-                            try:
-                                os.remove(converted_pdf_path)
-                                logger.info(f"已清理临时转换文件: {converted_pdf_path}")
-                            except Exception as e:
-                                logger.warning(f"清理临时转换文件失败: {e}")
-                        
-                        # 确保只保留最终的graded文件，删除可能存在的旧文件
-                        old_file_path = os.path.join(graded_reports_dir, f"{base_filename}{output_ext}")
-                        if os.path.exists(old_file_path):
-                            try:
-                                os.remove(old_file_path)
-                                logger.info(f"已清理旧文件: {old_file_path}")
-                            except Exception as e:
-                                logger.warning(f"清理旧文件失败: {e}")
-
+                    print(f"文件 {filename} 处理完成，状态: {result.get('status')}")
                 except Exception as e:
-                    print(f"评估过程中出错: {str(e)}")
+                    print(f"文件 {filename} 处理失败: {str(e)}")
                     documents_content.append({
                         "filename": filename,
-                        "type": "PDF" if ext == '.pdf' else "Word",
-                        "content": content[:500],
-                        "status": "未知",
+                        "type": "Unknown",
+                        "content": "",
+                        "status": "处理失败",
                         "score": 0,
-                        "comments": "评估过程中出错",
+                        "comments": str(e),
                         "size": os.path.getsize(file_path),
                         "ai_failed": False
                     })
