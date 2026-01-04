@@ -64,7 +64,7 @@ document.addEventListener('DOMContentLoaded', () => {
             itemRow.innerHTML = `
                 <span class="caret"></span>
                 <span class="icon folder-icon"></span>
-                <span class="name">${item.name}</span>
+                <span class="name" title="${item.name}">${item.name}</span>
                 <span class="file-count">(${fileCount}个)</span>
                 ${downloadButtonHtml}
                 ${deleteButtonHtml}
@@ -79,8 +79,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     fileLi.className = 'tree-item is-file';
                     
                     const fileHtml = !isStudentReports 
-                        ? `<a href="${API_BASE_URL}/graded_reports/${item.name}/${file}" target="_blank" class="name">${file}</a>`
-                        : `<span class="name">${file}</span>`;
+                        ? `<a href="${API_BASE_URL}/graded_reports/${item.name}/${file}" target="_blank" class="name" title="${file}">${file}</a>`
+                        : `<span class="name" title="${file}">${file}</span>`;
 
                     fileLi.innerHTML = `
                         <div class="tree-row">
