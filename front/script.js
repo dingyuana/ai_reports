@@ -27,6 +27,35 @@ document.addEventListener('DOMContentLoaded', () => {
     roleBadgeEl.textContent = roleMap[userInfo.role] || '用户';
     roleBadgeEl.className = `role-badge ${userInfo.role}`;
     
+    // 根据角色控制界面显示
+    if (userInfo.role === 'admin' || userInfo.role === 'super_admin') {
+        // 管理员角色：隐藏系统功能，显示管理入口
+        document.getElementById('student-reports-panel').style.display = 'none';
+        document.getElementById('graded-reports-panel').style.display = 'none';
+        document.getElementById('criteria-panel').style.display = 'none';
+        document.querySelector('.bottom-control-panel').style.display = 'none';
+        
+        // 添加管理入口
+        const mainGrid = document.querySelector('.main-grid');
+        mainGrid.innerHTML = `
+            <div class="panel admin-panel">
+                <div class="panel-header">
+                    <h2>管理功能</h2>
+                </div>
+                <div class="admin-menu">
+                    <a href="/admin_users.html" class="admin-menu-item">
+                        <span class="icon">👥</span>
+                        <span>用户管理</span>
+                    </a>
+                    <a href="/admin_logs.html" class="admin-menu-item">
+                        <span class="icon">📋</span>
+                        <span>日志管理</span>
+                    </a>
+                </div>
+            </div>
+        `;
+    }
+    
     // 退出登录
     logoutBtn.addEventListener('click', () => {
         localStorage.removeItem('access_token');

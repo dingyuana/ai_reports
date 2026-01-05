@@ -234,6 +234,11 @@ async def get_super_admin_user(current_user: Dict[str, Any] = Depends(get_curren
         raise HTTPException(status_code=403, detail="需要超级管理员权限")
     return current_user
 
+async def get_regular_user(current_user: Dict[str, Any] = Depends(get_current_active_user)):
+    if current_user['role'] != 'user':
+        raise HTTPException(status_code=403, detail="只有普通用户可以使用系统功能")
+    return current_user
+
 # 认证相关的API端点
 @app.post("/api/auth/register", response_model=UserResponse)
 async def register(user_data: UserRegister):
@@ -547,8 +552,8 @@ async def admin_get_logs(
 
 
 @app.get("/api/reports/")
-async def get_report_directories():
-    """获取 student_reports 目录下的所有子目录及其文件列表"""
+async def get_report_directories(current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """获取 student_reports 目录下的所有子目录及其文件列表（仅普通用户）"""
     base_path = "student_reports"
     try:
         if not os.path.exists(base_path) or not os.path.isdir(base_path):
@@ -569,8 +574,8 @@ async def get_report_directories():
 
 
 @app.get("/api/graded-reports/")
-async def get_graded_reports():
-    """获取 graded_reports 目录下的内容（子目录和文件）"""
+async def get_graded_reports(current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """获取 graded_reports 目录下的内容（子目录和文件）（仅普通用户）"""
     base_path = "graded_reports"
     try:
         if not os.path.exists(base_path) or not os.path.isdir(base_path):
@@ -591,8 +596,8 @@ async def get_graded_reports():
 
 
 @app.get("/api/download-graded")
-async def download_graded_directory(directory: str):
-    """压缩指定的已批阅目录并提供下载"""
+async def download_graded_directory(directory: str, current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """压缩指定的已批阅目录并提供下载（仅普通用户）"""
     target_dir = os.path.join("graded_reports", directory)
     if not os.path.isdir(target_dir):
         raise HTTPException(status_code=404, detail="目录未找到")
@@ -1213,9 +1218,9 @@ def process_single_file(
 
 
 @app.post("/api/annotate")
-async def annotate_report(scan_model: AnnotateScanModel):
+async def annotate_report(scan_model: AnnotateScanModel, current_user: Dict[str, Any] = Depends(get_regular_user)):
     """
-    批注报告接口 - 使用多线程并行处理
+    批注报告接口 - 使用多线程并行处理（仅普通用户）
     """
     # 打印接收到的新参数以供调试
     print(f"接收到批阅请求: 目录='{scan_model.directory}', 增加对号={scan_model.add_markings}, 增加评语={scan_model.ai_review}, 自动批分={scan_model.auto_grading}")
@@ -1389,8 +1394,8 @@ class CriteriaModel(BaseModel):
 
 
 @app.post("/api/criteria")
-async def set_criteria(data: CriteriaModel):
-    """设置全局的评分标准"""
+async def set_criteria(data: CriteriaModel, current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """设置全局的评分标准（仅普通用户）"""
     global GRADING_CRITERIA
     GRADING_CRITERIA = data.criteria
     save_criteria_to_file(GRADING_CRITERIA)
@@ -1399,14 +1404,14 @@ async def set_criteria(data: CriteriaModel):
 
 
 @app.get("/api/criteria")
-async def get_criteria():
-    """获取当前的评分标准"""
+async def get_criteria(current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """获取当前的评分标准（仅普通用户）"""
     return {"criteria": GRADING_CRITERIA}
 
 
 @app.post("/api/criteria/reset")
-async def reset_criteria():
-    """恢复默认的评分标准"""
+async def reset_criteria(current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """恢复默认的评分标准（仅普通用户）"""
     global GRADING_CRITERIA
     GRADING_CRITERIA = DEFAULT_GRADING_CRITERIA
     save_criteria_to_file(GRADING_CRITERIA)
@@ -1415,8 +1420,8 @@ async def reset_criteria():
 
 
 @app.post("/api/upload")
-async def upload_zip_file(file: UploadFile = File(...)):
-    """接收ZIP压缩文件，解压到student_reports目录"""
+async def upload_zip_file(file: UploadFile = File(...), current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """接收ZIP压缩文件，解压到student_reports目录（仅普通用户）"""
     if not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="只支持上传ZIP格式的压缩文件")
 
@@ -1454,8 +1459,8 @@ class SingleReportModel(BaseModel):
 
 
 @app.post("/api/grade_single_report")
-async def grade_single_report(data: SingleReportModel):
-    """批阅单个学生报告"""
+async def grade_single_report(data: SingleReportModel, current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """批阅单个学生报告（仅普通用户）"""
     try:
         # 确保文件存在
         if not os.path.exists(data.file_path):
@@ -1487,8 +1492,8 @@ async def grade_single_report(data: SingleReportModel):
 
 
 @app.delete("/api/reports/{directory_name}")
-async def delete_report_directory(directory_name: str):
-    """删除指定的报告目录"""
+async def delete_report_directory(directory_name: str, current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """删除指定的报告目录（仅普通用户）"""
     try:
         # 确保目录名安全，防止路径遍历攻击
         safe_dir_name = os.path.normpath(directory_name).replace("..", "")
@@ -1512,8 +1517,8 @@ async def delete_report_directory(directory_name: str):
 
 
 @app.delete("/api/graded-reports/{directory_name}")
-async def delete_graded_report_directory(directory_name: str):
-    """删除指定的已批阅报告目录"""
+async def delete_graded_report_directory(directory_name: str, current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """删除指定的已批阅报告目录（仅普通用户）"""
     try:
         # 确保目录名安全，防止路径遍历攻击
         safe_dir_name = os.path.normpath(directory_name).replace("..", "")
@@ -1537,8 +1542,8 @@ async def delete_graded_report_directory(directory_name: str):
 
 
 @app.get("/api/temp/usage")
-async def get_temp_usage():
-    """获取临时文件使用情况"""
+async def get_temp_usage(current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """获取临时文件使用情况（仅普通用户）"""
     try:
         usage = temp_manager.get_temp_usage()
         return {
@@ -1549,8 +1554,8 @@ async def get_temp_usage():
         raise HTTPException(status_code=500, detail=f"获取临时文件使用情况失败: {str(e)}")
 
 @app.post("/api/temp/cleanup")
-async def cleanup_temp_files():
-    """手动清理临时文件"""
+async def cleanup_temp_files(current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """手动清理临时文件（仅普通用户）"""
     try:
         temp_manager.cleanup_old_files()
         usage_after = temp_manager.get_temp_usage()
@@ -1626,8 +1631,8 @@ async def readiness_probe():
         raise HTTPException(status_code=503, detail=f"Readiness check failed: {str(e)}")
 
 @app.get("/api/download-csv")
-async def download_csv(file_path: str):
-    """下载CSV文件"""
+async def download_csv(file_path: str, current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """下载CSV文件（仅普通用户）"""
     try:
         # 确保路径安全，防止路径遍历攻击
         safe_path = os.path.normpath(file_path).replace("..", "")

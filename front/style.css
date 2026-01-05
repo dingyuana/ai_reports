@@ -776,4 +776,45 @@ header h1 {
 
 .loading-message.hidden {
     display: none;
+}
+
+/* 管理员面板样式 */
+.admin-panel {
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.admin-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+}
+
+.admin-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.5rem;
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 12px;
+    text-decoration: none;
+    color: var(--text-color);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+}
+
+.admin-menu-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+    background: rgba(255, 255, 255, 1);
+}
+
+.admin-menu-item .icon {
+    font-size: 2rem;
+}
+
+.admin-menu-item span:last-child {
+    font-size: 1.1rem;
+    font-weight: 500;
 } 
