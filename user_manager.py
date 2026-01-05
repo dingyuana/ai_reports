@@ -77,6 +77,16 @@ class UserManager:
                 if not self.verify_password(password, db_password):
                     return None
                 
+                # 更新最后登录时间
+                cursor.execute(
+                    """
+                    UPDATE users
+                    SET last_login = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    """,
+                    (user_id,)
+                )
+                
                 log_manager.log_user_login(
                     user_id=user_id,
                     ip_address=ip_address,
@@ -98,7 +108,7 @@ class UserManager:
             with get_db_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, username, email, role, is_active, created_at
+                    SELECT id, username, email, role, is_active, created_at, last_login
                     FROM users
                     WHERE id = %s
                     """,
@@ -115,7 +125,8 @@ class UserManager:
                     'email': user[2],
                     'role': user[3],
                     'is_active': user[4],
-                    'created_at': user[5]
+                    'created_at': user[5],
+                    'last_login': user[6]
                 }
         except Exception as e:
             print(f"获取用户信息失败: {e}")
@@ -126,7 +137,7 @@ class UserManager:
             with get_db_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, username, email, role, is_active, created_at
+                    SELECT id, username, email, role, is_active, created_at, last_login
                     FROM users
                     WHERE username = %s
                     """,
@@ -143,7 +154,8 @@ class UserManager:
                     'email': user[2],
                     'role': user[3],
                     'is_active': user[4],
-                    'created_at': user[5]
+                    'created_at': user[5],
+                    'last_login': user[6]
                 }
         except Exception as e:
             print(f"获取用户信息失败: {e}")
@@ -217,7 +229,7 @@ class UserManager:
             with get_db_cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, username, email, role, is_active, created_at
+                    SELECT id, username, email, role, is_active, created_at, last_login
                     FROM users
                     ORDER BY created_at DESC
                     """
@@ -230,7 +242,8 @@ class UserManager:
                         'email': user[2],
                         'role': user[3],
                         'is_active': user[4],
-                        'created_at': user[5]
+                        'created_at': user[5],
+                        'last_login': user[6]
                     }
                     for user in users
                 ]
