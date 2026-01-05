@@ -1,6 +1,58 @@
 document.addEventListener('DOMContentLoaded', () => {
     const API_BASE_URL = window.location.origin;
 
+    // 检查登录状态
+    const token = localStorage.getItem('access_token');
+    const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
+    
+    if (!token) {
+        window.location.href = '/login.html';
+        return;
+    }
+
+    // 显示用户信息
+    const userInfoEl = document.getElementById('user-info');
+    const usernameEl = userInfoEl.querySelector('.username');
+    const roleBadgeEl = userInfoEl.querySelector('.role-badge');
+    const logoutBtn = document.getElementById('logout-btn');
+    
+    usernameEl.textContent = userInfo.username || '未知用户';
+    
+    // 设置角色标签
+    const roleMap = {
+        'user': '普通用户',
+        'admin': '管理员',
+        'super_admin': '超级管理员'
+    };
+    roleBadgeEl.textContent = roleMap[userInfo.role] || '用户';
+    roleBadgeEl.className = `role-badge ${userInfo.role}`;
+    
+    // 退出登录
+    logoutBtn.addEventListener('click', () => {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('user_info');
+        window.location.href = '/login.html';
+    });
+
+    // API请求辅助函数
+    async function apiRequest(url, options = {}) {
+        const headers = {
+            'Authorization': `Bearer ${token}`,
+            ...options.headers
+        };
+        
+        const response = await fetch(url, { ...options, headers });
+        
+        if (response.status === 401) {
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('user_info');
+            window.location.href = '/login.html';
+            return null;
+        }
+        
+        return response;
+    }
+
     let selectedDirectory = null;
 
     // 左侧面板元素
@@ -13,6 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // 中间面板元素
     const criteriaFormEl = document.getElementById('criteria-form');
     const criteriaInputEl = document.getElementById('criteria-input');
+    const criteriaPreviewContentEl = document.getElementById('criteria-preview-content');
     const criteriaStatusEl = document.getElementById('criteria-status');
     const addMarkingsCheckbox = document.getElementById('option-add-markings');
     const aiReviewCheckbox = document.getElementById('option-ai-review');
@@ -111,7 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
         dirLoadingEl.classList.remove('hidden');
         directoryListEl.innerHTML = '';
         try {
-            const response = await fetch(`${API_BASE_URL}/api/reports/`);
+            const response = await apiRequest(`${API_BASE_URL}/api/reports/`);
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             const directories = await response.json();
             createTreeView(directories, directoryListEl, true);
@@ -130,7 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
         gradedLoadingEl.classList.remove('hidden');
         gradedListEl.innerHTML = '';
         try {
-            const response = await fetch(`${API_BASE_URL}/api/graded-reports/`);
+            const response = await apiRequest(`${API_BASE_URL}/api/graded-reports/`);
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             const directories = await response.json();
             createTreeView(directories, gradedListEl, false);
@@ -147,10 +200,11 @@ document.addEventListener('DOMContentLoaded', () => {
      */
     async function fetchAndSetCriteria() {
         try {
-            const response = await fetch(`${API_BASE_URL}/api/criteria`);
+            const response = await apiRequest(`${API_BASE_URL}/api/criteria`);
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             const data = await response.json();
             criteriaInputEl.value = data.criteria;
+            criteriaPreviewContentEl.innerHTML = marked.parse(data.criteria);
         } catch (error) {
             console.error('获取评分标准失败:', error);
         }
@@ -166,7 +220,7 @@ document.addEventListener('DOMContentLoaded', () => {
         criteriaStatusEl.className = 'status-message';
 
         try {
-            const response = await fetch(`${API_BASE_URL}/api/criteria`, {
+            const response = await apiRequest(`${API_BASE_URL}/api/criteria`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ criteria }),
@@ -206,7 +260,7 @@ document.addEventListener('DOMContentLoaded', () => {
             criteriaStatusEl.textContent = data.message;
             criteriaStatusEl.classList.add('success');
             
-            const getResponse = await fetch(`${API_BASE_URL}/api/criteria`);
+            const getResponse = await apiRequest(`${API_BASE_URL}/api/criteria`);
             if (getResponse.ok) {
                 const getData = await getResponse.json();
                 criteriaInputEl.value = getData.criteria;
@@ -237,7 +291,7 @@ document.addEventListener('DOMContentLoaded', () => {
         uploadBtn.disabled = true;
 
         try {
-            const response = await fetch(`${API_BASE_URL}/api/upload`, {
+            const response = await apiRequest(`${API_BASE_URL}/api/upload`, {
                 method: 'POST',
                 body: formData,
             });
@@ -279,16 +333,39 @@ document.addEventListener('DOMContentLoaded', () => {
             const modelSelect = document.getElementById('model-select');
             const selectedModel = modelSelect.value;
             
+            // 获取分数范围
+            const minScoreInput = document.getElementById('min-score');
+            const maxScoreInput = document.getElementById('max-score');
+            const minScore = parseInt(minScoreInput.value) || 60;
+            const maxScore = parseInt(maxScoreInput.value) || 95;
+            
+            // 验证分数范围
+            if (minScore < 0 || minScore > 100 || maxScore < 0 || maxScore > 100) {
+                alert("分数必须在0-100之间");
+                submitGradingBtn.textContent = '开始批阅选定目录';
+                submitGradingBtn.disabled = false;
+                return;
+            }
+            
+            if (minScore >= maxScore) {
+                alert("最低分必须小于最高分");
+                submitGradingBtn.textContent = '开始批阅选定目录';
+                submitGradingBtn.disabled = false;
+                return;
+            }
+            
             const payload = {
                 directory: selectedDirectory,
                 add_markings: addMarkingsCheckbox.checked,
                 ai_review: aiReviewCheckbox.checked,
                 auto_grading: autoGradingCheckbox.checked,
-                selected_model: selectedModel  // 添加选中的大模型
+                selected_model: selectedModel,
+                min_score: minScore,
+                max_score: maxScore
             };
 
         try {
-            const response = await fetch(`${API_BASE_URL}/api/annotate`, {
+            const response = await apiRequest(`${API_BASE_URL}/api/annotate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -395,7 +472,7 @@ document.addEventListener('DOMContentLoaded', () => {
         button.disabled = true;
 
         try {
-            const response = await fetch(`${API_BASE_URL}/api/download-graded?directory=${encodeURIComponent(directoryName)}`);
+            const response = await apiRequest(`${API_BASE_URL}/api/download-graded?directory=${encodeURIComponent(directoryName)}`);
             
             if (!response.ok) {
                 const errorData = await response.json();
@@ -430,7 +507,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-            const response = await fetch(`${API_BASE_URL}/api/reports/${encodeURIComponent(directoryName)}`, {
+            const response = await apiRequest(`${API_BASE_URL}/api/reports/${encodeURIComponent(directoryName)}`, {
                 method: 'DELETE',
             });
 
@@ -457,7 +534,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-            const response = await fetch(`${API_BASE_URL}/api/graded-reports/${encodeURIComponent(directoryName)}`, {
+            const response = await apiRequest(`${API_BASE_URL}/api/graded-reports/${encodeURIComponent(directoryName)}`, {
                 method: 'DELETE',
             });
 
@@ -543,6 +620,31 @@ document.addEventListener('DOMContentLoaded', () => {
     criteriaFormEl.addEventListener('submit', handleCriteriaSubmit);
     document.getElementById('reset-criteria-btn').addEventListener('click', handleCriteriaReset);
     submitGradingBtn.addEventListener('click', submitGrading);
+
+    // --- 批阅要求实时预览 ---
+    criteriaInputEl.addEventListener('input', () => {
+        const markdownText = criteriaInputEl.value;
+        criteriaPreviewContentEl.innerHTML = marked.parse(markdownText);
+    });
+
+    // --- 标签切换功能 ---
+    const tabButtons = document.querySelectorAll('.tab-btn');
+    const tabPanes = document.querySelectorAll('.tab-pane');
+
+    tabButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            const tabId = button.getAttribute('data-tab');
+            
+            tabButtons.forEach(btn => btn.classList.remove('active'));
+            tabPanes.forEach(pane => pane.classList.remove('active'));
+            
+            button.classList.add('active');
+            const targetPane = document.getElementById(`${tabId}-tab`);
+            if (targetPane) {
+                targetPane.classList.add('active');
+            }
+        });
+    });
 
     // --- 初始加载 ---
     fetchAndRenderStudentReports();

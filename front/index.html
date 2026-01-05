@@ -5,19 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>实验报告自动批阅系统</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
     <div class="container">
         <header>
             <h1>实验报告自动批阅系统</h1>
-            <div class="model-selection">
-                <label for="model-select">大模型选择：</label>
-                <select id="model-select">
-                    <option value="thudm/glm-z1-9b-0414" selected>THUDM/GLM-Z1-9B-0414 (SiliconFlow)</option>
-                    <option value="qwen/qwen3-8b">Qwen/Qwen3-8B (SiliconFlow)</option>
-                    <option value="glm-4.5-flash">GLM-4.5-Flash</option>
-                    <option value="Qwen/QwQ-32B">Qwen/QwQ-32B (SiliconFlow)</option>
-                </select>
+            <div class="header-controls">
+                <div class="model-selection">
+                    <label for="model-select">大模型选择：</label>
+                    <select id="model-select">
+                        <option value="thudm/glm-z1-9b-0414" selected>THUDM/GLM-Z1-9B-0414 (SiliconFlow)</option>
+                        <option value="qwen/qwen3-8b">Qwen/Qwen3-8B (SiliconFlow)</option>
+                        <option value="glm-4.5-flash">GLM-4.5-Flash</option>
+                        <option value="Qwen/QwQ-32B">Qwen/QwQ-32B (SiliconFlow)</option>
+                    </select>
+                </div>
+                <div class="user-info" id="user-info">
+                    <span class="username"></span>
+                    <span class="role-badge"></span>
+                    <button id="logout-btn" class="button small-button secondary">退出登录</button>
+                </div>
             </div>
         </header>
 
@@ -35,39 +43,7 @@
                 <p id="dir-loading" class="loading-message hidden">目录加载中...</p>
             </div>
 
-            <!-- 中间面板: 批阅要求 -->
-            <div id="criteria-panel" class="panel">
-                <div class="panel-header">
-                    <h2>批阅要求</h2>
-                    <div class="options-container">
-                        <label class="checkbox-label" title="调用AI模型生成分数">
-                            <input type="checkbox" id="option-auto-grading" checked>
-                            <span>自动批分</span>
-                        </label>
-                        <label class="checkbox-label" title="在批阅后的PDF上添加对号等标记">
-                            <input type="checkbox" id="option-add-markings" checked>
-                            <span>增加对号</span>
-                        </label>
-                        <label class="checkbox-label" title="调用AI模型生成评语">
-                            <input type="checkbox" id="option-ai-review" checked>
-                            <span>增加评语</span>
-                        </label>
-                    </div>
-                    <div class="button-group">
-                        <button type="submit" form="criteria-form" class="button small-button">保存标准</button>
-                        <button id="reset-criteria-btn" class="button small-button secondary">恢复默认</button>
-                    </div>
-                </div>
-                <form id="criteria-form">
-                    <textarea id="criteria-input" name="criteria" rows="15" placeholder="在此处输入评分标准..."></textarea>
-                    <p id="criteria-status" class="status-message"></p>
-                </form>
-                <div class="submit-container">
-                    <button id="submit-grading-btn" class="button large-button">开始批阅选定目录</button>
-                </div>
-            </div>
-
-            <!-- 右侧面板: 已批阅报告 -->
+            <!-- 中间面板: 已批阅报告 -->
             <div id="graded-reports-panel" class="panel">
                 <div class="panel-header">
                     <h2>已批阅报告</h2>
@@ -77,7 +53,79 @@
                 </div>
                 <p id="graded-loading" class="loading-message hidden">目录加载中...</p>
             </div>
+
+            <!-- 右侧面板: 批阅要求 -->
+            <div id="criteria-panel" class="panel">
+                <div class="panel-header">
+                    <h2>批阅要求</h2>
+                </div>
+                <form id="criteria-form">
+                    <div class="criteria-container">
+                        <div class="tab-container">
+                            <div class="tab-buttons">
+                                <button class="tab-btn" data-tab="editor">原文</button>
+                                <button class="tab-btn active" data-tab="preview">预览</button>
+                            </div>
+                            <div class="tab-content">
+                                <div id="editor-tab" class="tab-pane">
+                                    <textarea id="criteria-input" name="criteria" rows="15" placeholder="在此处输入评分标准（支持Markdown语法）..."></textarea>
+                                </div>
+                                <div id="preview-tab" class="tab-pane active">
+                                    <div class="preview-header">
+                                        <span>预览</span>
+                                    </div>
+                                    <div id="criteria-preview-content" class="preview-content"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <p id="criteria-status" class="status-message"></p>
+                </form>
+            </div>
         </main>
+
+        <!-- 底部控制面板 -->
+        <div class="bottom-control-panel">
+            <div class="control-section">
+                <h3>分数范围控制</h3>
+                <div class="score-range-container">
+                    <label class="score-label">分数范围:</label>
+                    <input type="number" id="min-score" class="score-input" min="0" max="100" value="60" placeholder="最低分">
+                    <span class="score-separator">-</span>
+                    <input type="number" id="max-score" class="score-input" min="0" max="100" value="95" placeholder="最高分">
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>批阅选项</h3>
+                <div class="options-container">
+                    <label class="checkbox-label" title="调用AI模型生成分数">
+                        <input type="checkbox" id="option-auto-grading" checked>
+                        <span>自动批分</span>
+                    </label>
+                    <label class="checkbox-label" title="在批阅后的PDF上添加对号等标记">
+                        <input type="checkbox" id="option-add-markings" checked>
+                        <span>增加对号</span>
+                    </label>
+                    <label class="checkbox-label" title="调用AI模型生成评语">
+                        <input type="checkbox" id="option-ai-review" checked>
+                        <span>增加评语</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h3>批阅要求设置</h3>
+                <div class="button-group">
+                    <button type="submit" form="criteria-form" class="button small-button">保存标准</button>
+                    <button id="reset-criteria-btn" class="button small-button secondary">恢复默认</button>
+                </div>
+            </div>
+
+            <div class="control-section action-section">
+                <button id="submit-grading-btn" class="button large-button">开始批阅选定目录</button>
+            </div>
+        </div>
         
         <div id="results-container" class="results-container hidden">
             <div class="results-content">

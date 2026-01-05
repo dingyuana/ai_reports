@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用户管理 - 实验报告自动批阅系统</title>
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+    <div class="admin-container">
+        <header>
+            <h1>用户管理</h1>
+            <div class="header-controls">
+                <a href="/index.html" class="button small-button">返回主页</a>
+                <button id="logout-btn" class="button small-button secondary">退出登录</button>
+            </div>
+        </header>
+
+        <main>
+            <div class="toolbar">
+                <button id="add-user-btn" class="button">添加用户</button>
+                <div class="search-box">
+                    <input type="text" id="search-input" placeholder="搜索用户名或邮箱...">
+                </div>
+            </div>
+
+            <div class="users-table-container">
+                <table class="users-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>用户名</th>
+                            <th>邮箱</th>
+                            <th>角色</th>
+                            <th>创建时间</th>
+                            <th>最后登录</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="users-table-body">
+                        <!-- 用户列表将由JS动态加载 -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="loading" class="loading-message">加载中...</div>
+            <div id="error-message" class="error-message"></div>
+        </main>
+    </div>
+
+    <!-- 用户编辑/添加模态框 -->
+    <div id="user-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">添加用户</h2>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="user-form">
+                    <input type="hidden" id="user-id">
+                    <div class="form-group">
+                        <label for="username">用户名 *</label>
+                        <input type="text" id="username" name="username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="email">邮箱</label>
+                        <input type="email" id="email" name="email">
+                    </div>
+                    <div class="form-group">
+                        <label for="password">密码 <span id="password-hint">(添加用户时必填)</span></label>
+                        <input type="password" id="password" name="password">
+                    </div>
+                    <div class="form-group">
+                        <label for="role">角色 *</label>
+                        <select id="role" name="role" required>
+                            <option value="user">普通用户</option>
+                            <option value="admin">管理员</option>
+                            <option value="super_admin">超级管理员</option>
+                        </select>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="button">保存</button>
+                        <button type="button" class="button secondary cancel-btn">取消</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 删除确认模态框 -->
+    <div id="delete-modal" class="modal">
+        <div class="modal-content small-modal">
+            <div class="modal-header">
+                <h2>确认删除</h2>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p>确定要删除用户 <strong id="delete-username"></strong> 吗？</p>
+                <div class="form-actions">
+                    <button id="confirm-delete-btn" class="button danger">删除</button>
+                    <button class="button secondary cancel-btn">取消</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="admin_users.js"></script>
+</body>
+</html>

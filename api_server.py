@@ -5,8 +5,9 @@ import logging
 import time
 from datetime import datetime
 from urllib.parse import unquote
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, status, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -24,12 +25,30 @@ import shutil
 import zipfile
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
+# 导入数据库和用户管理模块
+from database import init_db_pool, close_db_pool, init_database, get_db_cursor
+from user_manager import user_manager
+from log_manager import log_manager
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from datetime import timedelta
 
 # 配置日志记录器
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+
+# JWT配置
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here-change-in-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+# OAuth2密码流
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
+
+# 密码加密上下文
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # 配置CORS
 app.add_middleware(
@@ -129,7 +148,15 @@ def save_criteria_to_file(criteria: str):
 async def startup_event():
     """服务器启动时执行的操作"""
     load_criteria_from_file()
-    logger.info("服务器已启动，批阅要求已加载")
+    init_db_pool()
+    init_database()
+    logger.info("服务器已启动，批阅要求已加载，数据库连接池已初始化")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """服务器关闭时执行的操作"""
+    close_db_pool()
+    logger.info("服务器已关闭，数据库连接池已关闭")
 
 
 # 创建评分系统实例
@@ -140,6 +167,383 @@ zhipu_api_key = os.getenv('ARK_API_KEY')
 if not zhipu_api_key:
     raise ValueError("ARK_API_KEY environment variable is not set")
 zhipu_client = ZhipuAiClient(api_key=zhipu_api_key)
+
+
+# 认证相关的Pydantic模型
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class UserRegister(BaseModel):
+    username: str
+    password: str
+    email: Optional[str] = None
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    user: Dict[str, Any]
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: Optional[str]
+    role: str
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="无法验证凭据",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    
+    user = user_manager.get_user_by_username(username)
+    if user is None:
+        raise credentials_exception
+    return user
+
+async def get_current_active_user(current_user: Dict[str, Any] = Depends(get_current_user)):
+    if not current_user.get('is_active', True):
+        raise HTTPException(status_code=400, detail="用户账户已停用")
+    return current_user
+
+async def get_admin_user(current_user: Dict[str, Any] = Depends(get_current_active_user)):
+    if not user_manager.is_admin(current_user['id']):
+        raise HTTPException(status_code=403, detail="权限不足")
+    return current_user
+
+async def get_super_admin_user(current_user: Dict[str, Any] = Depends(get_current_active_user)):
+    if not user_manager.is_super_admin(current_user['id']):
+        raise HTTPException(status_code=403, detail="需要超级管理员权限")
+    return current_user
+
+# 认证相关的API端点
+@app.post("/api/auth/register", response_model=UserResponse)
+async def register(user_data: UserRegister):
+    """用户注册"""
+    existing_user = user_manager.get_user_by_username(user_data.username)
+    if existing_user:
+        raise HTTPException(status_code=400, detail="用户名已存在")
+    
+    user_id = user_manager.create_user(
+        username=user_data.username,
+        password=user_data.password,
+        email=user_data.email,
+        role='user'
+    )
+    
+    if user_id is None:
+        raise HTTPException(status_code=500, detail="注册失败")
+    
+    user = user_manager.get_user_by_id(user_id)
+    return UserResponse(**user)
+
+@app.post("/api/auth/login", response_model=Token)
+async def login(username: str = Form(...), password: str = Form(...)):
+    """用户登录"""
+    user = user_manager.authenticate_user(
+        username=username,
+        password=password
+    )
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="用户名或密码错误",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user['username']}, expires_delta=access_token_expires
+    )
+    
+    return Token(
+        access_token=access_token,
+        token_type="bearer",
+        user=user
+    )
+
+@app.get("/api/auth/me", response_model=UserResponse)
+async def get_me(current_user: Dict[str, Any] = Depends(get_current_active_user)):
+    """获取当前用户信息"""
+    return UserResponse(**current_user)
+
+@app.get("/api/auth/users", response_model=List[UserResponse])
+async def get_all_users(current_user: Dict[str, Any] = Depends(get_admin_user)):
+    """获取所有用户列表（仅管理员）"""
+    users = user_manager.get_all_users()
+    return [UserResponse(**user) for user in users]
+
+@app.put("/api/auth/users/{user_id}/role")
+async def update_user_role(
+    user_id: int,
+    new_role: str,
+    current_user: Dict[str, Any] = Depends(get_super_admin_user)
+):
+    """更新用户角色（仅超级管理员）"""
+    if new_role not in ['user', 'admin', 'super_admin']:
+        raise HTTPException(status_code=400, detail="无效的角色")
+    
+    success = user_manager.update_user_role(user_id, new_role)
+    if not success:
+        raise HTTPException(status_code=500, detail="更新用户角色失败")
+    
+    return {"message": "用户角色更新成功"}
+
+@app.put("/api/auth/users/{user_id}/activate")
+async def activate_user(
+    user_id: int,
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """激活用户（仅管理员）"""
+    success = user_manager.activate_user(user_id)
+    if not success:
+        raise HTTPException(status_code=500, detail="激活用户失败")
+    
+    return {"message": "用户激活成功"}
+
+@app.put("/api/auth/users/{user_id}/deactivate")
+async def deactivate_user(
+    user_id: int,
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """停用用户（仅管理员）"""
+    success = user_manager.deactivate_user(user_id)
+    if not success:
+        raise HTTPException(status_code=500, detail="停用用户失败")
+    
+    return {"message": "用户停用成功"}
+
+@app.get("/api/logs")
+async def get_logs(
+    limit: int = 100,
+    offset: int = 0,
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """获取日志列表（仅管理员）"""
+    logs = log_manager.get_all_logs(limit=limit, offset=offset)
+    return {"logs": logs, "total": len(logs)}
+
+@app.get("/api/logs/user/{user_id}")
+async def get_user_logs(
+    user_id: int,
+    limit: int = 100,
+    offset: int = 0,
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """获取指定用户的日志（仅管理员）"""
+    logs = log_manager.get_user_logs(user_id=user_id, limit=limit, offset=offset)
+    return {"logs": logs, "total": len(logs)}
+
+# 管理员API端点
+@app.get("/api/admin/users")
+async def admin_get_users(current_user: Dict[str, Any] = Depends(get_admin_user)):
+    """获取所有用户列表（管理员）"""
+    users = user_manager.get_all_users()
+    return users
+
+@app.post("/api/admin/users")
+async def admin_create_user(
+    user_data: dict,
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """创建新用户（管理员）"""
+    username = user_data.get('username')
+    password = user_data.get('password')
+    email = user_data.get('email')
+    role = user_data.get('role', 'user')
+    
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="用户名和密码不能为空")
+    
+    if role not in ['user', 'admin', 'super_admin']:
+        raise HTTPException(status_code=400, detail="无效的角色")
+    
+    existing_user = user_manager.get_user_by_username(username)
+    if existing_user:
+        raise HTTPException(status_code=400, detail="用户名已存在")
+    
+    user_id = user_manager.create_user(
+        username=username,
+        password=password,
+        email=email,
+        role=role
+    )
+    
+    if user_id is None:
+        raise HTTPException(status_code=500, detail="创建用户失败")
+    
+    user = user_manager.get_user_by_id(user_id)
+    return user
+
+@app.put("/api/admin/users/{user_id}")
+async def admin_update_user(
+    user_id: int,
+    user_data: dict,
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """更新用户信息（管理员）"""
+    username = user_data.get('username')
+    email = user_data.get('email')
+    role = user_data.get('role')
+    password = user_data.get('password')
+    
+    user = user_manager.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    
+    if role and role not in ['user', 'admin', 'super_admin']:
+        raise HTTPException(status_code=400, detail="无效的角色")
+    
+    if role and current_user['role'] != 'super_admin':
+        raise HTTPException(status_code=403, detail="只有超级管理员可以修改角色")
+    
+    success = user_manager.update_user(
+        user_id=user_id,
+        username=username,
+        email=email,
+        role=role,
+        password=password
+    )
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="更新用户失败")
+    
+    updated_user = user_manager.get_user_by_id(user_id)
+    return updated_user
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(
+    user_id: int,
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """删除用户（管理员）"""
+    if user_id == current_user['id']:
+        raise HTTPException(status_code=400, detail="不能删除自己")
+    
+    user = user_manager.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    
+    if user['role'] == 'super_admin' and current_user['role'] != 'super_admin':
+        raise HTTPException(status_code=403, detail="不能删除超级管理员")
+    
+    success = user_manager.delete_user(user_id)
+    if not success:
+        raise HTTPException(status_code=500, detail="删除用户失败")
+    
+    return {"message": "用户删除成功"}
+
+@app.get("/api/admin/logs")
+async def admin_get_logs(
+    action: Optional[str] = None,
+    user_id: Optional[int] = None,
+    date: Optional[str] = None,
+    search: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """获取日志列表（管理员，支持筛选和分页）"""
+    offset = (page - 1) * page_size
+    
+    try:
+        with get_db_cursor() as cursor:
+            query = """
+                SELECT l.id, l.user_id, l.action, l.details, l.ip_address, l.created_at, u.username
+                FROM logs l
+                LEFT JOIN users u ON l.user_id = u.id
+                WHERE 1=1
+            """
+            params = []
+            
+            if action:
+                query += " AND l.action = %s"
+                params.append(action)
+            
+            if user_id:
+                query += " AND l.user_id = %s"
+                params.append(user_id)
+            
+            if date:
+                query += " AND DATE(l.created_at) = %s"
+                params.append(date)
+            
+            if search:
+                query += " AND (l.details ILIKE %s OR u.username ILIKE %s)"
+                params.extend([f'%{search}%', f'%{search}%'])
+            
+            query += " ORDER BY l.created_at DESC LIMIT %s OFFSET %s"
+            params.extend([page_size, offset])
+            
+            cursor.execute(query, params)
+            logs = cursor.fetchall()
+            
+            count_query = """
+                SELECT COUNT(*)
+                FROM logs l
+                LEFT JOIN users u ON l.user_id = u.id
+                WHERE 1=1
+            """
+            count_params = []
+            
+            if action:
+                count_query += " AND l.action = %s"
+                count_params.append(action)
+            
+            if user_id:
+                count_query += " AND l.user_id = %s"
+                count_params.append(user_id)
+            
+            if date:
+                count_query += " AND DATE(l.created_at) = %s"
+                count_params.append(date)
+            
+            if search:
+                count_query += " AND (l.details ILIKE %s OR u.username ILIKE %s)"
+                count_params.extend([f'%{search}%', f'%{search}%'])
+            
+            cursor.execute(count_query, count_params)
+            total = cursor.fetchone()[0]
+            
+            log_list = []
+            for log in logs:
+                log_list.append({
+                    'id': log[0],
+                    'user_id': log[1],
+                    'action': log[2],
+                    'details': log[3],
+                    'ip_address': log[4],
+                    'created_at': log[5],
+                    'username': log[6]
+                })
+            
+            return {
+                'logs': log_list,
+                'total': total,
+                'page': page,
+                'page_size': page_size
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取日志失败: {str(e)}")
 
 
 @app.get("/api/reports/")
@@ -217,6 +621,8 @@ class AnnotateScanModel(BaseModel):
     ai_review: bool
     auto_grading: bool
     selected_model: str = "Qwen/QwQ-32B"
+    min_score: int = 60
+    max_score: int = 95
 
 
 import asyncio
@@ -538,12 +944,14 @@ def process_single_file(
         {GRADING_CRITERIA}
         ---
 
+        重要要求：总分必须在{scan_model.min_score}到{scan_model.max_score}分之间，请严格按照此范围评分。
+
         报告内容：
         {content[:4000]}  # 限制内容长度以避免超过模型限制
 
         请给出评估结果，格式为JSON:
         {{
-            "score": 0-100的评分,
+            "score": {scan_model.min_score}-{scan_model.max_score}的评分,
             "is_qualified": true/false,
             "comments": "具体的评估意见",
             "reasons": ["不合格原因1", "不合格原因2"]
@@ -1128,14 +1536,6 @@ async def delete_graded_report_directory(directory_name: str):
         raise HTTPException(status_code=500, detail=f"删除目录失败: {str(e)}")
 
 
-if __name__ == "__main__":
-    import uvicorn
-
-    import os
-    port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
-
-
 @app.get("/api/temp/usage")
 async def get_temp_usage():
     """获取临时文件使用情况"""
@@ -1252,6 +1652,82 @@ async def download_csv(file_path: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"下载失败: {str(e)}")
 
-# 挂载静态文件目录
-# 注意：这必须在所有API路由之后进行，以确保API路由优先匹配
-app.mount("/", StaticFiles(directory="front", html=True), name="front")
+@app.get("/")
+async def root():
+    """根路径重定向到index.html"""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/index.html")
+
+@app.get("/index.html")
+async def serve_index():
+    """服务index.html"""
+    from fastapi.responses import FileResponse
+    return FileResponse("front/index.html")
+
+@app.get("/login.html")
+async def serve_login():
+    """服务login.html"""
+    from fastapi.responses import FileResponse
+    return FileResponse("front/login.html")
+
+@app.get("/admin_users.html")
+async def serve_admin_users():
+    """服务admin_users.html"""
+    from fastapi.responses import FileResponse
+    return FileResponse("front/admin_users.html")
+
+@app.get("/admin_logs.html")
+async def serve_admin_logs():
+    """服务admin_logs.html"""
+    from fastapi.responses import FileResponse
+    return FileResponse("front/admin_logs.html")
+
+@app.get("/style.css")
+async def serve_style():
+    """服务style.css"""
+    from fastapi.responses import FileResponse
+    return FileResponse("front/style.css")
+
+@app.get("/script.js")
+async def serve_script():
+    """服务script.js"""
+    from fastapi.responses import FileResponse
+    return FileResponse("front/script.js")
+
+@app.get("/login.css")
+async def serve_login_css():
+    """服务login.css"""
+    from fastapi.responses import FileResponse
+    return FileResponse("front/login.css")
+
+@app.get("/login.js")
+async def serve_login_js():
+    """服务login.js"""
+    from fastapi.responses import FileResponse
+    return FileResponse("front/login.js")
+
+@app.get("/admin.css")
+async def serve_admin_css():
+    """服务admin.css"""
+    from fastapi.responses import FileResponse
+    return FileResponse("front/admin.css")
+
+@app.get("/admin_users.js")
+async def serve_admin_users_js():
+    """服务admin_users.js"""
+    from fastapi.responses import FileResponse
+    return FileResponse("front/admin_users.js")
+
+@app.get("/admin_logs.js")
+async def serve_admin_logs_js():
+    """服务admin_logs.js"""
+    from fastapi.responses import FileResponse
+    return FileResponse("front/admin_logs.js")
+
+app.mount("/static", StaticFiles(directory="front"), name="static")
+
+if __name__ == "__main__":
+    import uvicorn
+    import os
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

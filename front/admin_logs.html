@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>日志管理 - 实验报告自动批阅系统</title>
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+    <div class="admin-container">
+        <header>
+            <h1>日志管理</h1>
+            <div class="header-controls">
+                <a href="/index.html" class="button small-button">返回主页</a>
+                <button id="logout-btn" class="button small-button secondary">退出登录</button>
+            </div>
+        </header>
+
+        <main>
+            <div class="toolbar">
+                <div class="filter-group">
+                    <select id="action-filter">
+                        <option value="">所有操作类型</option>
+                        <option value="login">登录</option>
+                        <option value="logout">退出登录</option>
+                        <option value="upload">上传文件</option>
+                        <option value="annotate">批阅报告</option>
+                        <option value="download">下载文件</option>
+                        <option value="delete">删除文件</option>
+                        <option value="create_user">创建用户</option>
+                        <option value="update_user">更新用户</option>
+                        <option value="delete_user">删除用户</option>
+                    </select>
+                    <select id="user-filter">
+                        <option value="">所有用户</option>
+                    </select>
+                    <input type="date" id="date-filter" placeholder="选择日期">
+                </div>
+                <div class="search-box">
+                    <input type="text" id="search-input" placeholder="搜索日志详情...">
+                </div>
+            </div>
+
+            <div class="logs-table-container">
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>时间</th>
+                            <th>用户</th>
+                            <th>操作类型</th>
+                            <th>IP地址</th>
+                            <th>详情</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logs-table-body">
+                        <!-- 日志列表将由JS动态加载 -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="pagination">
+                <button id="prev-page" class="button small-button secondary" disabled>上一页</button>
+                <span id="page-info">第 1 页</span>
+                <button id="next-page" class="button small-button secondary">下一页</button>
+            </div>
+
+            <div id="loading" class="loading-message">加载中...</div>
+            <div id="error-message" class="error-message"></div>
+        </main>
+    </div>
+
+    <script src="admin_logs.js"></script>
+</body>
+</html>
