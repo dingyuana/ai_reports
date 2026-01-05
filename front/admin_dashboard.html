@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>后台管理 - 实验报告自动批阅系统</title>
+    <link rel="stylesheet" href="admin.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="admin-container">
+        <header>
+            <h1>后台管理</h1>
+            <div class="header-controls">
+                <a href="/index.html" class="button small-button">返回主页</a>
+                <a href="/admin_users.html" class="button small-button">用户管理</a>
+                <a href="/admin_logs.html" class="button small-button">日志管理</a>
+                <button id="logout-btn" class="button small-button secondary">退出登录</button>
+            </div>
+        </header>
+
+        <main>
+            <div class="stats-overview">
+                <div class="stat-card">
+                    <div class="stat-icon users-icon">👥</div>
+                    <div class="stat-content">
+                        <div class="stat-label">总用户数</div>
+                        <div class="stat-value" id="total-users">-</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon active-users-icon">🟢</div>
+                    <div class="stat-content">
+                        <div class="stat-label">今日活跃用户</div>
+                        <div class="stat-value" id="active-users-today">-</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon logs-icon">📝</div>
+                    <div class="stat-content">
+                        <div class="stat-label">今日日志</div>
+                        <div class="stat-value" id="today-logs">-</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon total-logs-icon">📊</div>
+                    <div class="stat-content">
+                        <div class="stat-label">总日志数</div>
+                        <div class="stat-value" id="total-logs">-</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="charts-container">
+                <div class="chart-section">
+                    <h2>用户活动趋势（近30天）</h2>
+                    <div class="chart-wrapper">
+                        <canvas id="userActivityChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-section">
+                    <h2>操作分布</h2>
+                    <div class="chart-wrapper">
+                        <canvas id="actionDistributionChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-section full-width">
+                    <h2>每日汇总（近7天）</h2>
+                    <div class="chart-wrapper">
+                        <canvas id="dailySummaryChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-section">
+                    <h2>每小时活动（今日）</h2>
+                    <div class="chart-wrapper">
+                        <canvas id="hourlyActivityChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-section">
+                    <h2>活跃用户排行（TOP 10）</h2>
+                    <div class="chart-wrapper">
+                        <canvas id="topUsersChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="data-sections">
+                <div class="data-section">
+                    <h2>用户工作统计</h2>
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>用户名</th>
+                                    <th>邮箱</th>
+                                    <th>角色</th>
+                                    <th>上传</th>
+                                    <th>下载</th>
+                                    <th>批阅</th>
+                                    <th>总操作</th>
+                                    <th>最后活动</th>
+                                </tr>
+                            </thead>
+                            <tbody id="user-work-table-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="data-section">
+                    <h2>最近活动</h2>
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>时间</th>
+                                    <th>用户</th>
+                                    <th>操作</th>
+                                    <th>详情</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recent-activities-table-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="loading" class="loading-message">加载中...</div>
+            <div id="error-message" class="error-message"></div>
+        </main>
+    </div>
+
+    <script src="admin_dashboard.js"></script>
+</body>
+</html>

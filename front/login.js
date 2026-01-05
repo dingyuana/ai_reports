@@ -75,9 +75,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 showMessage('登录成功，正在跳转...', 'success');
                 
-                // 延迟跳转到主页面
+                // 根据用户角色跳转到不同页面
                 setTimeout(() => {
-                    window.location.href = '/index.html';
+                    if (data.user.role === 'admin' || data.user.role === 'super_admin') {
+                        window.location.href = '/admin_dashboard.html';
+                    } else {
+                        window.location.href = '/index.html';
+                    }
                 }, 1000);
             } else {
                 showMessage(data.detail || '登录失败，请检查用户名和密码', 'error');

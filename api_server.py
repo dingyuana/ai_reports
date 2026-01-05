@@ -73,7 +73,7 @@ DEFAULT_GRADING_CRITERIA = """
 评分标准
 总分100分，实际得分范围要在指定分数之间。评分需兼顾标准要求与分数正态分布特性，避免集中出现逢五、逢十的整数分数。
 
-1. 内容完整性（34分）
+1. 内容完整性（34分） 
 - 核心要素齐全（21分）：报告需完整包含实验目的、实验原理、实验步骤、实验结果、实验分析与总结等必要核心部分。
 - 过程描述清晰（13分）：实验过程文字描述逻辑连贯、条理清晰，能准确反映实验操作的先后顺序和关键细节。
 
@@ -1656,6 +1656,315 @@ async def readiness_probe():
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Readiness check failed: {str(e)}")
 
+@app.get("/api/admin/stats/overview")
+async def admin_get_stats_overview(current_user: Dict[str, Any] = Depends(get_admin_user)):
+    """获取系统概览统计数据（管理员）"""
+    try:
+        with get_db_cursor() as cursor:
+            stats = {}
+            
+            cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = true")
+            stats['total_users'] = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM users WHERE is_active = false")
+            stats['inactive_users'] = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = true")
+            stats['total_admins'] = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM logs WHERE created_at >= CURRENT_DATE")
+            stats['today_logs'] = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM logs")
+            stats['total_logs'] = cursor.fetchone()[0]
+            
+            cursor.execute("""
+                SELECT COUNT(DISTINCT user_id) FROM logs WHERE created_at >= CURRENT_DATE
+            """)
+            stats['active_users_today'] = cursor.fetchone()[0]
+            
+            return stats
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取统计数据失败: {str(e)}")
+
+
+@app.get("/api/admin/stats/user-activity")
+async def admin_get_user_activity_stats(
+    days: int = 30,
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """获取用户活动统计数据（管理员）"""
+    try:
+        with get_db_cursor() as cursor:
+            query = """
+                SELECT 
+                    DATE(created_at) as date,
+                    COUNT(DISTINCT user_id) as active_users,
+                    COUNT(*) as total_actions
+                FROM logs
+                WHERE created_at >= CURRENT_DATE - INTERVAL '%s days'
+                GROUP BY DATE(created_at)
+                ORDER BY date DESC
+            """
+            cursor.execute(query, (days,))
+            results = cursor.fetchall()
+            
+            activity_data = []
+            for row in results:
+                activity_data.append({
+                    'date': row[0].strftime('%Y-%m-%d'),
+                    'active_users': row[1],
+                    'total_actions': row[2]
+                })
+            
+            return activity_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取用户活动统计失败: {str(e)}")
+
+
+@app.get("/api/admin/stats/action-distribution")
+async def admin_get_action_distribution_stats(
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """获取操作分布统计数据（管理员）"""
+    try:
+        with get_db_cursor() as cursor:
+            query = """
+                SELECT 
+                    action,
+                    COUNT(*) as count
+                FROM logs
+                GROUP BY action
+                ORDER BY count DESC
+            """
+            cursor.execute(query)
+            results = cursor.fetchall()
+            
+            distribution = []
+            for row in results:
+                distribution.append({
+                    'action': row[0],
+                    'count': row[1]
+                })
+            
+            return distribution
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取操作分布统计失败: {str(e)}")
+
+
+@app.get("/api/admin/stats/user-work")
+async def admin_get_user_work_stats(
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """获取用户工作统计数据（管理员）"""
+    try:
+        with get_db_cursor() as cursor:
+            query = """
+                SELECT 
+                    u.id,
+                    u.username,
+                    u.email,
+                    u.role,
+                    COUNT(l.id) as total_actions,
+                    COUNT(CASE WHEN l.action = 'upload' THEN 1 END) as upload_count,
+                    COUNT(CASE WHEN l.action = 'download' THEN 1 END) as download_count,
+                    COUNT(CASE WHEN l.action = 'grade' THEN 1 END) as grade_count,
+                    MAX(l.created_at) as last_activity
+                FROM users u
+                LEFT JOIN logs l ON u.id = l.user_id
+                WHERE u.is_active = true
+                GROUP BY u.id, u.username, u.email, u.role
+                ORDER BY total_actions DESC
+            """
+            cursor.execute(query)
+            results = cursor.fetchall()
+            
+            user_stats = []
+            for row in results:
+                user_stats.append({
+                    'user_id': row[0],
+                    'username': row[1],
+                    'email': row[2],
+                    'role': row[3],
+                    'total_actions': row[4],
+                    'upload_count': row[5],
+                    'download_count': row[6],
+                    'grade_count': row[7],
+                    'last_activity': row[8].strftime('%Y-%m-%d %H:%M:%S') if row[8] else None
+                })
+            
+            return user_stats
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取用户工作统计失败: {str(e)}")
+
+
+@app.get("/api/admin/stats/daily-summary")
+async def admin_get_daily_summary_stats(
+    days: int = 7,
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """获取每日汇总统计数据（管理员）"""
+    try:
+        with get_db_cursor() as cursor:
+            query = """
+                SELECT 
+                    DATE(created_at) as date,
+                    COUNT(*) as total_logs,
+                    COUNT(DISTINCT user_id) as active_users,
+                    COUNT(CASE WHEN action = 'upload' THEN 1 END) as uploads,
+                    COUNT(CASE WHEN action = 'download' THEN 1 END) as downloads,
+                    COUNT(CASE WHEN action = 'grade' THEN 1 END) as grades
+                FROM logs
+                WHERE created_at >= CURRENT_DATE - INTERVAL '%s days'
+                GROUP BY DATE(created_at)
+                ORDER BY date DESC
+            """
+            cursor.execute(query, (days,))
+            results = cursor.fetchall()
+            
+            daily_summary = []
+            for row in results:
+                daily_summary.append({
+                    'date': row[0].strftime('%Y-%m-%d'),
+                    'total_logs': row[1],
+                    'active_users': row[2],
+                    'uploads': row[3],
+                    'downloads': row[4],
+                    'grades': row[5]
+                })
+            
+            return daily_summary
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取每日汇总统计失败: {str(e)}")
+
+
+@app.get("/api/admin/stats/hourly-activity")
+async def admin_get_hourly_activity_stats(
+    date: Optional[str] = None,
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """获取每小时活动统计数据（管理员）"""
+    try:
+        with get_db_cursor() as cursor:
+            if date:
+                query = """
+                    SELECT 
+                        EXTRACT(HOUR FROM created_at) as hour,
+                        COUNT(*) as count
+                    FROM logs
+                    WHERE DATE(created_at) = %s
+                    GROUP BY EXTRACT(HOUR FROM created_at)
+                    ORDER BY hour
+                """
+                cursor.execute(query, (date,))
+            else:
+                query = """
+                    SELECT 
+                        EXTRACT(HOUR FROM created_at) as hour,
+                        COUNT(*) as count
+                    FROM logs
+                    WHERE DATE(created_at) = CURRENT_DATE
+                    GROUP BY EXTRACT(HOUR FROM created_at)
+                    ORDER BY hour
+                """
+                cursor.execute(query)
+            
+            results = cursor.fetchall()
+            
+            hourly_data = []
+            for row in results:
+                hourly_data.append({
+                    'hour': int(row[0]),
+                    'count': row[1]
+                })
+            
+            return hourly_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取每小时活动统计失败: {str(e)}")
+
+
+@app.get("/api/admin/stats/top-users")
+async def admin_get_top_users_stats(
+    limit: int = 10,
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """获取活跃用户排行（管理员）"""
+    try:
+        with get_db_cursor() as cursor:
+            query = """
+                SELECT 
+                    u.id,
+                    u.username,
+                    u.email,
+                    COUNT(l.id) as total_actions,
+                    MAX(l.created_at) as last_activity
+                FROM users u
+                INNER JOIN logs l ON u.id = l.user_id
+                WHERE u.is_active = true
+                GROUP BY u.id, u.username, u.email
+                ORDER BY total_actions DESC
+                LIMIT %s
+            """
+            cursor.execute(query, (limit,))
+            results = cursor.fetchall()
+            
+            top_users = []
+            for row in results:
+                top_users.append({
+                    'user_id': row[0],
+                    'username': row[1],
+                    'email': row[2],
+                    'total_actions': row[3],
+                    'last_activity': row[4].strftime('%Y-%m-%d %H:%M:%S') if row[4] else None
+                })
+            
+            return top_users
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取活跃用户排行失败: {str(e)}")
+
+
+@app.get("/api/admin/stats/recent-activities")
+async def admin_get_recent_activities(
+    limit: int = 20,
+    current_user: Dict[str, Any] = Depends(get_admin_user)
+):
+    """获取最近活动记录（管理员）"""
+    try:
+        with get_db_cursor() as cursor:
+            query = """
+                SELECT 
+                    l.id,
+                    l.user_id,
+                    l.action,
+                    l.details,
+                    l.ip_address,
+                    l.created_at,
+                    u.username
+                FROM logs l
+                LEFT JOIN users u ON l.user_id = u.id
+                ORDER BY l.created_at DESC
+                LIMIT %s
+            """
+            cursor.execute(query, (limit,))
+            results = cursor.fetchall()
+            
+            activities = []
+            for row in results:
+                activities.append({
+                    'id': row[0],
+                    'user_id': row[1],
+                    'action': row[2],
+                    'details': row[3],
+                    'ip_address': row[4],
+                    'created_at': row[5].strftime('%Y-%m-%d %H:%M:%S'),
+                    'username': row[6]
+                })
+            
+            return activities
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取最近活动记录失败: {str(e)}")
+
+
 @app.get("/api/download-csv")
 async def download_csv(file_path: str, current_user: Dict[str, Any] = Depends(get_regular_user)):
     """下载CSV文件（仅普通用户）"""
@@ -1707,6 +2016,12 @@ async def serve_admin_users():
     from fastapi.responses import FileResponse
     return FileResponse("front/admin_users.html")
 
+@app.get("/admin_dashboard.html")
+async def serve_admin_dashboard():
+    """服务admin_dashboard.html"""
+    from fastapi.responses import FileResponse
+    return FileResponse("front/admin_dashboard.html")
+
 @app.get("/admin_logs.html")
 async def serve_admin_logs():
     """服务admin_logs.html"""
@@ -1754,6 +2069,12 @@ async def serve_admin_logs_js():
     """服务admin_logs.js"""
     from fastapi.responses import FileResponse
     return FileResponse("front/admin_logs.js")
+
+@app.get("/admin_dashboard.js")
+async def serve_admin_dashboard_js():
+    """服务admin_dashboard.js"""
+    from fastapi.responses import FileResponse
+    return FileResponse("front/admin_dashboard.js")
 
 app.mount("/static", StaticFiles(directory="front"), name="static")
 

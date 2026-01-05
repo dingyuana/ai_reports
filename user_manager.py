@@ -305,6 +305,11 @@ class UserManager:
     
     def delete_user(self, user_id: int) -> bool:
         try:
+            # 先获取用户信息用于日志记录
+            user = self.get_user_by_id(user_id)
+            if not user:
+                return False
+            
             with get_db_cursor() as cursor:
                 cursor.execute(
                     """
@@ -313,12 +318,14 @@ class UserManager:
                     """,
                     (user_id,)
                 )
-                log_manager.log_action(
-                    user_id=user_id,
-                    action="delete_user",
-                    details=f"删除用户ID: {user_id}"
-                )
-                return True
+            
+            # 在事务外部记录日志，避免外键约束问题
+            log_manager.log_action(
+                user_id=None,
+                action="delete_user",
+                details=f"删除用户: {user['username']} (ID: {user_id})"
+            )
+            return True
         except Exception as e:
             print(f"删除用户失败: {e}")
             return False
