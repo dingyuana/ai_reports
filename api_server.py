@@ -29,6 +29,7 @@ from starlette.background import BackgroundTask
 from database import init_db_pool, close_db_pool, init_database, get_db_cursor
 from user_manager import user_manager
 from log_manager import log_manager
+from config_manager import config_manager
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from datetime import timedelta
@@ -70,7 +71,7 @@ DEFAULT_GRADING_CRITERIA = """
 请依据以下评分标准对学生提交的大学实训报告进行客观、公正的批阅打分。
 
 评分标准
-总分100分，实际得分范围60-95分。评分需兼顾标准要求与分数正态分布特性，避免集中出现逢五、逢十的整数分数。
+总分100分，实际得分范围要在指定分数之间。评分需兼顾标准要求与分数正态分布特性，避免集中出现逢五、逢十的整数分数。
 
 1. 内容完整性（34分）
 - 核心要素齐全（21分）：报告需完整包含实验目的、实验原理、实验步骤、实验结果、实验分析与总结等必要核心部分。
@@ -89,7 +90,7 @@ DEFAULT_GRADING_CRITERIA = """
 - 引用成果标注规范（6分）：引用他人理论、数据、观点等成果时，需准确标明出处，引用格式规范。
 
 批阅要求
-1. 逐维度对照细则评分，各维度得分汇总为总分，总分需在60-95分之间。
+1. 逐维度对照细则评分，各维度得分汇总为总分，总分需在指定分数之间。
 2. 保证分数正态分布，避免大量报告集中在某一分数段，尽量避免给出65、70、75、80、85、90等分数。
 3. 撰写总评语，不列出具体扣分分数，字数控制在200字左右，明确指出报告的优点与不足，评语具有指导性。
 
@@ -793,7 +794,8 @@ def process_single_file(
     graded_reports_dir: str,
     output_subdir: str,
     scan_model: AnnotateScanModel,
-    qualified_csv_lock: Any
+    qualified_csv_lock: Any,
+    user_id: int
 ) -> Dict[str, Any]:
     """
     处理单个文件的函数，用于多线程并行处理
@@ -807,6 +809,7 @@ def process_single_file(
         output_subdir: 输出子目录
         scan_model: 批阅模型配置
         qualified_csv_lock: CSV文件写入锁
+        user_id: 用户ID，用于获取用户特定配置
         
     Returns:
         处理结果字典
@@ -942,21 +945,22 @@ def process_single_file(
                 }
 
             # 使用ARK大模型评估报告质量
+            # 获取用户特定的评分标准（包含分数范围）
+            user_criteria = config_manager.get_criteria_with_score_range(user_id)
+            
             prompt = f"""
         作为一个大学资深老师
         请根据以下标准评估实验报告的质量：
         ---
-        {GRADING_CRITERIA}
+        {user_criteria}
         ---
-
-        重要要求：总分必须在{scan_model.min_score}到{scan_model.max_score}分之间，请严格按照此范围评分。
 
         报告内容：
         {content[:4000]}  # 限制内容长度以避免超过模型限制
 
         请给出评估结果，格式为JSON:
         {{
-            "score": {scan_model.min_score}-{scan_model.max_score}的评分,
+            "score": 评分,
             "is_qualified": true/false,
             "comments": "具体的评估意见",
             "reasons": ["不合格原因1", "不合格原因2"]
@@ -1275,7 +1279,8 @@ async def annotate_report(scan_model: AnnotateScanModel, current_user: Dict[str,
                     graded_reports_dir,
                     output_subdir,
                     scan_model,
-                    qualified_csv_lock
+                    qualified_csv_lock,
+                    current_user['id']
                 ): (filename, file_path)
                 for filename, file_path in files_to_process
             }
@@ -1391,31 +1396,52 @@ async def annotate_report(scan_model: AnnotateScanModel, current_user: Dict[str,
 
 class CriteriaModel(BaseModel):
     criteria: str
+    min_score: Optional[int] = 60
+    max_score: Optional[int] = 95
 
 
 @app.post("/api/criteria")
 async def set_criteria(data: CriteriaModel, current_user: Dict[str, Any] = Depends(get_regular_user)):
-    """设置全局的评分标准（仅普通用户）"""
-    global GRADING_CRITERIA
-    GRADING_CRITERIA = data.criteria
-    save_criteria_to_file(GRADING_CRITERIA)
-    logger.info(f"新的评分标准已设置并保存")
+    """设置用户的评分标准和分数范围（仅普通用户）"""
+    success = config_manager.update_user_config(
+        user_id=current_user['id'],
+        criteria=data.criteria,
+        min_score=data.min_score,
+        max_score=data.max_score
+    )
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="保存配置失败")
+    
+    logger.info(f"用户 {current_user['username']} 的评分标准已更新")
     return {"message": "评分标准已成功更新"}
 
 
 @app.get("/api/criteria")
 async def get_criteria(current_user: Dict[str, Any] = Depends(get_regular_user)):
-    """获取当前的评分标准（仅普通用户）"""
-    return {"criteria": GRADING_CRITERIA}
+    """获取用户的评分标准和分数范围（仅普通用户）"""
+    config = config_manager.get_or_create_user_config(current_user['id'])
+    return {
+        "criteria": config['criteria'],
+        "min_score": config['min_score'],
+        "max_score": config['max_score']
+    }
 
 
 @app.post("/api/criteria/reset")
 async def reset_criteria(current_user: Dict[str, Any] = Depends(get_regular_user)):
     """恢复默认的评分标准（仅普通用户）"""
-    global GRADING_CRITERIA
-    GRADING_CRITERIA = DEFAULT_GRADING_CRITERIA
-    save_criteria_to_file(GRADING_CRITERIA)
-    logger.info(f"已恢复默认评分标准")
+    success = config_manager.update_user_config(
+        user_id=current_user['id'],
+        criteria=config_manager.default_criteria,
+        min_score=60,
+        max_score=95
+    )
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="恢复默认配置失败")
+    
+    logger.info(f"用户 {current_user['username']} 已恢复默认评分标准")
     return {"message": "评分标准已恢复为默认值"}
 
 

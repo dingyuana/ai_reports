@@ -234,6 +234,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await response.json();
             criteriaInputEl.value = data.criteria;
             criteriaPreviewContentEl.innerHTML = marked.parse(data.criteria);
+            document.getElementById('min-score').value = data.min_score;
+            document.getElementById('max-score').value = data.max_score;
         } catch (error) {
             console.error('获取评分标准失败:', error);
         }
@@ -306,6 +308,73 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     /**
+     * 保存用户配置（评分标准和分数范围）
+     */
+    async function handleSaveConfig() {
+        const criteria = criteriaInputEl.value;
+        const minScore = document.getElementById('min-score').value;
+        const maxScore = document.getElementById('max-score').value;
+
+        criteriaStatusEl.textContent = '保存配置中...';
+        criteriaStatusEl.className = 'status-message';
+
+        try {
+            const response = await apiRequest(`${API_BASE_URL}/api/criteria`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    criteria,
+                    min_score: parseInt(minScore),
+                    max_score: parseInt(maxScore)
+                }),
+            });
+            if (!response.ok) throw new Error('保存配置失败');
+            const data = await response.json();
+            criteriaStatusEl.textContent = data.message;
+            criteriaStatusEl.classList.add('success');
+        } catch (error) {
+            criteriaStatusEl.textContent = error.message;
+            criteriaStatusEl.classList.add('error');
+        } finally {
+            setTimeout(() => {
+                criteriaStatusEl.textContent = '';
+                criteriaStatusEl.className = 'status-message';
+            }, 3000);
+        }
+    }
+
+    /**
+     * 加载用户配置（评分标准和分数范围）
+     */
+    async function handleLoadConfig() {
+        criteriaStatusEl.textContent = '加载配置中...';
+        criteriaStatusEl.className = 'status-message';
+
+        try {
+            const response = await apiRequest(`${API_BASE_URL}/api/criteria`);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const data = await response.json();
+            
+            criteriaInputEl.value = data.criteria;
+            criteriaPreviewContentEl.innerHTML = marked.parse(data.criteria);
+            document.getElementById('min-score').value = data.min_score;
+            document.getElementById('max-score').value = data.max_score;
+            
+            criteriaStatusEl.textContent = '配置加载成功';
+            criteriaStatusEl.classList.add('success');
+        } catch (error) {
+            console.error('加载配置失败:', error);
+            criteriaStatusEl.textContent = error.message;
+            criteriaStatusEl.classList.add('error');
+        } finally {
+            setTimeout(() => {
+                criteriaStatusEl.textContent = '';
+                criteriaStatusEl.className = 'status-message';
+            }, 3000);
+        }
+    }
+
+    /**
      * 处理文件上传
      */
     async function handleFileUpload() {
@@ -362,35 +431,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const modelSelect = document.getElementById('model-select');
             const selectedModel = modelSelect.value;
             
-            // 获取分数范围
-            const minScoreInput = document.getElementById('min-score');
-            const maxScoreInput = document.getElementById('max-score');
-            const minScore = parseInt(minScoreInput.value) || 60;
-            const maxScore = parseInt(maxScoreInput.value) || 95;
-            
-            // 验证分数范围
-            if (minScore < 0 || minScore > 100 || maxScore < 0 || maxScore > 100) {
-                alert("分数必须在0-100之间");
-                submitGradingBtn.textContent = '开始批阅选定目录';
-                submitGradingBtn.disabled = false;
-                return;
-            }
-            
-            if (minScore >= maxScore) {
-                alert("最低分必须小于最高分");
-                submitGradingBtn.textContent = '开始批阅选定目录';
-                submitGradingBtn.disabled = false;
-                return;
-            }
-            
             const payload = {
                 directory: selectedDirectory,
                 add_markings: addMarkingsCheckbox.checked,
                 ai_review: aiReviewCheckbox.checked,
                 auto_grading: autoGradingCheckbox.checked,
-                selected_model: selectedModel,
-                min_score: minScore,
-                max_score: maxScore
+                selected_model: selectedModel
             };
 
         try {
@@ -648,6 +694,8 @@ document.addEventListener('DOMContentLoaded', () => {
     fileInput.addEventListener('change', handleFileUpload);
     criteriaFormEl.addEventListener('submit', handleCriteriaSubmit);
     document.getElementById('reset-criteria-btn').addEventListener('click', handleCriteriaReset);
+    document.getElementById('save-config-btn').addEventListener('click', handleSaveConfig);
+    document.getElementById('load-config-btn').addEventListener('click', handleLoadConfig);
     submitGradingBtn.addEventListener('click', submitGrading);
 
     // --- 批阅要求实时预览 ---

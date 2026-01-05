@@ -323,4 +323,19 @@ class UserManager:
             print(f"删除用户失败: {e}")
             return False
 
+    def delete_user_by_username(self, username: str) -> bool:
+        try:
+            with get_db_cursor() as cursor:
+                cursor.execute(
+                    """
+                    DELETE FROM users
+                    WHERE username = %s
+                    """,
+                    (username,)
+                )
+                return True
+        except Exception as e:
+            print(f"删除用户失败: {e}")
+            return False
+
 user_manager = UserManager()

@@ -35,11 +35,23 @@ CREATE TABLE IF NOT EXISTS grading_records (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 创建用户配置表
+CREATE TABLE IF NOT EXISTS user_configs (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    criteria TEXT NOT NULL,
+    min_score INTEGER DEFAULT 60,
+    max_score INTEGER DEFAULT 95,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 创建索引以提高查询性能
 CREATE INDEX IF NOT EXISTS idx_logs_user_id ON logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_grading_records_user_id ON grading_records(user_id);
 CREATE INDEX IF NOT EXISTS idx_grading_records_created_at ON grading_records(created_at);
+CREATE INDEX IF NOT EXISTS idx_user_configs_user_id ON user_configs(user_id);
 
 -- 插入默认超级管理员账户（密码为 admin123，实际应用中应该使用哈希密码）
 INSERT INTO users (username, password, email, role) 
