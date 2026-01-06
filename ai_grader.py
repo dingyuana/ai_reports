@@ -6,7 +6,7 @@
     2. 实现与AI服务的通信接口
     3. 处理AI返回的评分和评语
 功能:
-    - 连接外部AI服务（如智谱AI）
+    - 连接外部AI服务（豆包模型）
     - 发送报告内容和批阅标准
     - 接收AI生成的评语
     - 从评语中提取分数
@@ -15,14 +15,15 @@
     - 通过grade_report方法发送报告内容进行批阅
     - 返回包含分数和评语的字典
 依赖:
-    - zai: 用于智谱AI通信
+    - requests: 用于豆包模型API通信
     - re: 用于正则表达式提取分数
 """
 
 from typing import Dict, Any
 import logging
 import re
-from zai import ZhipuAiClient
+import os
+import requests
 
 # 配置日志记录器
 logger = logging.getLogger(__name__)
@@ -33,15 +34,23 @@ class AIGrader:
 
     def __init__(self, api_config: Dict[str, str]):
         self.api_key = api_config["api_key"]
-        self.model = api_config.get("model", "glm-4.7")
-        self.client = ZhipuAiClient(api_key=self.api_key)
+        self.model = api_config.get("model", "doubao-seed-1-6-lite-251015")
+        self.api_endpoint = api_config.get("api_endpoint", "https://ark.cn-beijing.volces.com/api/v3")
+        self.timeout = api_config.get("timeout", 30)
+        self.temperature = api_config.get("temperature", 0.7)
 
     def grade_report(self, report_text: str, criteria: str) -> Dict[str, Any]:
         """调用AI接口批阅报告"""
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
+            # 使用豆包模型，通过 requests 直接调用
+            url = f"{self.api_endpoint}/chat/completions"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}"
+            }
+            payload = {
+                "model": self.model,
+                "messages": [
                     {
                         "role": "system",
                         "content": f"你是一个专业的教师，需要根据以下标准批阅学生实验报告：{criteria}"
@@ -51,10 +60,15 @@ class AIGrader:
                         "content": f"请批阅这份实验报告：\n{report_text}"
                     }
                 ],
-                temperature=0.3
-            )
+                "temperature": self.temperature
+            }
+            
+            response = requests.post(url, json=payload, headers=headers, timeout=self.timeout)
+            response.raise_for_status()
+            
+            result = response.json()
+            comments = result["choices"][0]["message"]["content"]
 
-            comments = response.choices[0].message.content
             score = self._extract_score(comments)
 
             return {"score": score, "comments": comments}

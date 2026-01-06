@@ -12,7 +12,6 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from grading_system import GradingSystem
-from zai import ZhipuAiClient
 from config import API_CONFIG
 # Import temporary file manager
 from utils.temp_file_manager import temp_manager, temp_file, temp_dir
@@ -162,12 +161,6 @@ async def shutdown_event():
 
 # 创建评分系统实例
 grading_system = GradingSystem(REPORTS_DIR, OUTPUT_DIR, API_CONFIG)
-
-# 配置智谱AI模型
-zhipu_api_key = os.getenv('ARK_API_KEY')
-if not zhipu_api_key:
-    raise ValueError("ARK_API_KEY environment variable is not set")
-zhipu_client = ZhipuAiClient(api_key=zhipu_api_key)
 
 
 # 认证相关的Pydantic模型
@@ -695,7 +688,40 @@ async def invoke_ark_model(prompt: str, model_name: str = "Qwen/QwQ-32B", max_re
             # 定义同步调用函数
             def sync_call():
                 # 根据模型名称选择不同的调用方式
-                if model_name in ["thudm/glm-z1-9b-0414", "qwen/qwen3-8b", "Qwen/QwQ-32B"]:
+                if model_name.startswith("doubao"):
+                    # 调用豆包模型API
+                    import requests
+                    
+                    # 豆包API配置
+                    API_KEY = os.getenv("ARK_API_KEY", "")
+                    API_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+                    
+                    # 构建请求参数
+                    payload = {
+                        "model": model_name,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
+                        ],
+                        "temperature": 0.7
+                    }
+                    
+                    # 发送请求
+                    headers = {
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {API_KEY}"
+                    }
+                    response = requests.post(API_URL, json=payload, headers=headers, timeout=timeout)
+                    
+                    # 处理响应
+                    if response.status_code == 200:
+                        result = response.json()
+                        return result["choices"][0]["message"]["content"]
+                    else:
+                        raise Exception(f"豆包API请求失败，状态码: {response.status_code}, 错误信息: {response.text}")
+                elif model_name in ["thudm/glm-z1-9b-0414", "qwen/qwen3-8b", "Qwen/QwQ-32B"]:
                     # 调用硅基流动API
                     import requests
                     
@@ -732,21 +758,8 @@ async def invoke_ark_model(prompt: str, model_name: str = "Qwen/QwQ-32B", max_re
                     else:
                         raise Exception(f"API请求失败，状态码: {response.status_code}, 错误信息: {response.text}")
                 else:
-                    # 默认调用智谱AI模型
-                    response = zhipu_client.chat.completions.create(
-                        model="glm-4.5-flash",
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": prompt
-                            }
-                        ],
-                        temperature=0.3
-                    )
-                    # 提取回复内容
-                    if hasattr(response.choices[0].message, "content"):
-                        return response.choices[0].message.content
-                    return str(response.choices[0].message)
+                    # 不支持的模型
+                    raise Exception(f"不支持的模型: {model_name}")
 
             # 在线程池中执行API调用，避免阻塞事件循环
             start_time = time.time()

@@ -29,6 +29,7 @@ python-dotenv==1.0.0
 
 # AI SDK
 volcengine-python-sdk[ark]==1.0.98
+openai>=1.0.0
 
 # Logging
 structlog==23.2.0

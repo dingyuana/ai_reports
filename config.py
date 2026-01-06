@@ -43,7 +43,7 @@ SECRET_KEY = get_env_var("SECRET_KEY", "default-secret-key-change-in-production"
 
 # 文件处理配置
 MAX_FILE_SIZE = int(get_env_var("MAX_FILE_SIZE", "104857600"))  # 100MB
-AI_TIMEOUT = int(get_env_var("AI_TIMEOUT", "30"))
+AI_TIMEOUT = int(get_env_var("AI_TIMEOUT", "120"))  # 增加到120秒
 MAX_RETRIES = int(get_env_var("MAX_RETRIES", "3"))
 
 # 导入secrets管理器
@@ -55,25 +55,57 @@ except ImportError:
 
 # AI服务器配置
 if USE_SECRETS_MANAGER:
-    API_CONFIG = {
-        "api_key": get_ai_api_key(),
-        "api_endpoint": get_env_var("AI_API_ENDPOINT", "https://open.bigmodel.cn/api/paas/v4"),
-        "model": get_env_var("AI_MODEL", "glm-4.7"),
-        "timeout": AI_TIMEOUT,
-        "max_retries": MAX_RETRIES,
-        "temperature": float(get_env_var("AI_TEMPERATURE", "0.7"))
-    }
+    AI_PROVIDER = get_env_var("AI_PROVIDER", "zhipu")  # zhipu 或 doubao
+    
+    if AI_PROVIDER == "doubao":
+        # 使用豆包模型
+        API_CONFIG = {
+            "api_key": get_ark_api_key(),
+            "api_endpoint": "https://ark.cn-beijing.volces.com/api/v3",
+            "model": get_env_var("AI_MODEL", "doubao-seed-1-6-lite-251015"),
+            "provider": "doubao",
+            "timeout": AI_TIMEOUT,
+            "max_retries": MAX_RETRIES,
+            "temperature": float(get_env_var("AI_TEMPERATURE", "0.7"))
+        }
+    else:
+        # 使用智谱AI
+        API_CONFIG = {
+            "api_key": get_ai_api_key(),
+            "api_endpoint": get_env_var("AI_API_ENDPOINT", "https://open.bigmodel.cn/api/paas/v4"),
+            "model": get_env_var("AI_MODEL", "glm-4.7"),
+            "provider": "zhipu",
+            "timeout": AI_TIMEOUT,
+            "max_retries": MAX_RETRIES,
+            "temperature": float(get_env_var("AI_TEMPERATURE", "0.7"))
+        }
     ARK_API_KEY = get_ark_api_key()
     SECRET_KEY = get_secret_key()
 else:
-    API_CONFIG = {
-        "api_key": get_env_var("AI_API_KEY", required=True),
-        "api_endpoint": get_env_var("AI_API_ENDPOINT", "https://open.bigmodel.cn/api/paas/v4"),
-        "model": get_env_var("AI_MODEL", "glm-4.7"),
-        "timeout": AI_TIMEOUT,
-        "max_retries": MAX_RETRIES,
-        "temperature": float(get_env_var("AI_TEMPERATURE", "0.7"))
-    }
+    AI_PROVIDER = get_env_var("AI_PROVIDER", "zhipu")  # zhipu 或 doubao
+    
+    if AI_PROVIDER == "doubao":
+        # 使用豆包模型
+        API_CONFIG = {
+            "api_key": get_env_var("ARK_API_KEY", required=True),
+            "api_endpoint": "https://ark.cn-beijing.volces.com/api/v3",
+            "model": get_env_var("AI_MODEL", "doubao-seed-1-6-lite-251015"),
+            "provider": "doubao",
+            "timeout": AI_TIMEOUT,
+            "max_retries": MAX_RETRIES,
+            "temperature": float(get_env_var("AI_TEMPERATURE", "0.7"))
+        }
+    else:
+        # 使用智谱AI
+        API_CONFIG = {
+            "api_key": get_env_var("AI_API_KEY", required=True),
+            "api_endpoint": get_env_var("AI_API_ENDPOINT", "https://open.bigmodel.cn/api/paas/v4"),
+            "model": get_env_var("AI_MODEL", "glm-4.7"),
+            "provider": "zhipu",
+            "timeout": AI_TIMEOUT,
+            "max_retries": MAX_RETRIES,
+            "temperature": float(get_env_var("AI_TEMPERATURE", "0.7"))
+        }
     ARK_API_KEY = get_env_var("ARK_API_KEY", required=True)
 
 # 支持的文档类型
