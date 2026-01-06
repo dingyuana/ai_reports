@@ -5,7 +5,7 @@ import logging
 import time
 from datetime import datetime
 from urllib.parse import unquote
-from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, status, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, status, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -342,10 +342,27 @@ async def deactivate_user(
 async def get_logs(
     limit: int = 100,
     offset: int = 0,
+    action: Optional[str] = None,
+    user_id: Optional[int] = None,
+    date: Optional[str] = None,
     current_user: Dict[str, Any] = Depends(get_admin_user)
 ):
     """获取日志列表（仅管理员）"""
-    logs = log_manager.get_all_logs(limit=limit, offset=offset)
+    start_date = None
+    end_date = None
+    if date:
+        # 简单的日期过滤，假设格式为YYYY-MM-DD
+        start_date = f"{date} 00:00:00"
+        end_date = f"{date} 23:59:59"
+        
+    logs = log_manager.get_logs(
+        action=action,
+        user_id=user_id,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        offset=offset
+    )
     return {"logs": logs, "total": len(logs)}
 
 @app.get("/api/logs/user/{user_id}")
@@ -555,7 +572,8 @@ async def admin_get_logs(
 @app.get("/api/reports/")
 async def get_report_directories(current_user: Dict[str, Any] = Depends(get_regular_user)):
     """获取 student_reports 目录下的所有子目录及其文件列表（仅普通用户）"""
-    base_path = "student_reports"
+    user_id = current_user['id']
+    base_path = os.path.join("student_reports", str(user_id))
     try:
         if not os.path.exists(base_path) or not os.path.isdir(base_path):
             return []
@@ -577,7 +595,8 @@ async def get_report_directories(current_user: Dict[str, Any] = Depends(get_regu
 @app.get("/api/graded-reports/")
 async def get_graded_reports(current_user: Dict[str, Any] = Depends(get_regular_user)):
     """获取 graded_reports 目录下的内容（子目录和文件）（仅普通用户）"""
-    base_path = "graded_reports"
+    user_id = current_user['id']
+    base_path = os.path.join("graded_reports", str(user_id))
     try:
         if not os.path.exists(base_path) or not os.path.isdir(base_path):
             return []
@@ -597,9 +616,14 @@ async def get_graded_reports(current_user: Dict[str, Any] = Depends(get_regular_
 
 
 @app.get("/api/download-graded")
-async def download_graded_directory(directory: str, current_user: Dict[str, Any] = Depends(get_regular_user)):
+async def download_graded_directory(
+    request: Request,
+    directory: str,
+    current_user: Dict[str, Any] = Depends(get_regular_user)
+):
     """压缩指定的已批阅目录并提供下载（仅普通用户）"""
-    target_dir = os.path.join("graded_reports", directory)
+    user_id = current_user['id']
+    target_dir = os.path.join("graded_reports", str(user_id), directory)
     if not os.path.isdir(target_dir):
         raise HTTPException(status_code=404, detail="目录未找到")
 
@@ -607,11 +631,18 @@ async def download_graded_directory(directory: str, current_user: Dict[str, Any]
     temp_dir = "temp"
     os.makedirs(temp_dir, exist_ok=True)
     # make_archive会自动添加.zip后缀，所以我们提供基础名
-    base_zip_name = os.path.join(temp_dir, directory)
+    base_zip_name = os.path.join(temp_dir, f"{user_id}_{directory}")
     zip_path = shutil.make_archive(base_zip_name, 'zip', target_dir)
 
     def cleanup():
         os.remove(zip_path)
+
+    # 记录下载日志
+    log_manager.log_file_download(
+        user_id=current_user['id'],
+        file_name=f"{directory}_graded.zip",
+        ip_address=request.client.host
+    )
 
     return FileResponse(
         path=zip_path,
@@ -741,7 +772,7 @@ async def invoke_ark_model(prompt: str, model_name: str = "Qwen/QwQ-32B", max_re
     return None  # 不应该到达这里，但为了安全起见
 
 
-def convert_word_to_pdf_with_retry(word_processor, word_path: str, pdf_path: str, max_retries: int = 3) -> bool:
+def convert_word_to_pdf_with_retry(word_processor, word_path: str, pdf_path: str, max_retries: int = 10) -> bool:
     """
     带重试机制的Word转PDF函数
     
@@ -749,7 +780,7 @@ def convert_word_to_pdf_with_retry(word_processor, word_path: str, pdf_path: str
         word_processor: Word处理器实例
         word_path: Word文件路径
         pdf_path: 输出的PDF文件路径
-        max_retries: 最大重试次数，默认3次
+        max_retries: 最大重试次数，默认10次
         
     Returns:
         转换成功返回True，失败返回False
@@ -769,7 +800,7 @@ def convert_word_to_pdf_with_retry(word_processor, word_path: str, pdf_path: str
                 
                 # 如果不是最后一次尝试，等待后重试
                 if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt  # 1, 2, 4...秒
+                    wait_time = 1  # 移除指数退避，固定等待1秒
                     print(f"等待 {wait_time} 秒后重试...")
                     time.sleep(wait_time)
                     
@@ -778,7 +809,7 @@ def convert_word_to_pdf_with_retry(word_processor, word_path: str, pdf_path: str
             
             # 如果不是最后一次尝试，等待后重试
             if attempt < max_retries - 1:
-                wait_time = 2 ** attempt  # 1, 2, 4...秒
+                wait_time = 1  # 移除指数退避，固定等待1秒
                 print(f"等待 {wait_time} 秒后重试...")
                 time.sleep(wait_time)
     
@@ -840,8 +871,8 @@ def process_single_file(
             # 构建转换后的PDF路径
             converted_pdf_path = os.path.join(graded_reports_dir, f"{base_filename}_converted.pdf")
             
-            # 转换为PDF（带重试机制，最多重试3次）
-            if not convert_word_to_pdf_with_retry(word_processor, file_path, converted_pdf_path, max_retries=3):
+            # 转换为PDF（带重试机制，最多重试10次）
+            if not convert_word_to_pdf_with_retry(word_processor, file_path, converted_pdf_path, max_retries=10):
                 logger.error(f"转换Word文件为PDF失败: {file_path}")
                 return {
                     "filename": filename,
@@ -849,7 +880,7 @@ def process_single_file(
                     "content": "",
                     "status": "处理失败",
                     "score": 0,
-                    "comments": "转换失败（已重试3次）",
+                    "comments": "转换失败（已重试10次）",
                     "size": os.path.getsize(file_path),
                     "ai_failed": False
                 }
@@ -904,8 +935,8 @@ def process_single_file(
                 # 构建临时PDF路径
                 temp_pdf_path = os.path.join(graded_reports_dir, f"{base_filename}_temp.pdf")
                 
-                # 转换为PDF（带重试机制，最多重试3次）
-                if not convert_word_to_pdf_with_retry(word_processor, file_path, temp_pdf_path, max_retries=3):
+                # 转换为PDF（带重试机制，最多重试5次）
+                if not convert_word_to_pdf_with_retry(word_processor, file_path, temp_pdf_path, max_retries=5):
                     logger.error(f"转换Word文件为PDF失败: {file_path}")
                     return {
                         "filename": filename,
@@ -913,7 +944,7 @@ def process_single_file(
                         "content": "",
                         "status": "转换失败",
                         "score": 0,
-                        "comments": "转换失败（已重试3次）",
+                        "comments": "转换失败（已重试5次）",
                         "size": os.path.getsize(file_path),
                         "ai_failed": False
                     }
@@ -1113,8 +1144,8 @@ def process_single_file(
                     # 构建转换后的PDF路径
                     converted_pdf_path = os.path.join(graded_reports_dir, f"{base_filename}_converted.pdf")
                     
-                    # 转换为PDF（带重试机制，最多重试3次）
-                    if not convert_word_to_pdf_with_retry(word_processor, file_path, converted_pdf_path, max_retries=3):
+                    # 转换为PDF（带重试机制，最多重试10次）
+                    if not convert_word_to_pdf_with_retry(word_processor, file_path, converted_pdf_path, max_retries=10):
                         logger.error(f"转换Word文件为PDF失败: {file_path}")
                         return {
                             "filename": filename,
@@ -1122,7 +1153,7 @@ def process_single_file(
                             "content": content[:5000],
                             "status": "转换失败",
                             "score": 0,
-                            "comments": "转换失败（已重试3次）",
+                            "comments": "转换失败（已重试10次）",
                             "size": os.path.getsize(file_path),
                             "ai_failed": False
                         }
@@ -1222,7 +1253,11 @@ def process_single_file(
 
 
 @app.post("/api/annotate")
-async def annotate_report(scan_model: AnnotateScanModel, current_user: Dict[str, Any] = Depends(get_regular_user)):
+async def annotate_report(
+    request: Request,
+    scan_model: AnnotateScanModel,
+    current_user: Dict[str, Any] = Depends(get_regular_user)
+):
     """
     批注报告接口 - 使用多线程并行处理（仅普通用户）
     """
@@ -1233,7 +1268,8 @@ async def annotate_report(scan_model: AnnotateScanModel, current_user: Dict[str,
         # 解码目录名称
         decoded_directory = unquote(scan_model.directory)
         print(f"解码后的目录名称: {decoded_directory}")
-        scan_path = os.path.join("student_reports", decoded_directory)
+        user_id = current_user['id']
+        scan_path = os.path.join("student_reports", str(user_id), decoded_directory)
 
         # 检查目录是否存在
         if not os.path.exists(scan_path):
@@ -1244,11 +1280,11 @@ async def annotate_report(scan_model: AnnotateScanModel, current_user: Dict[str,
         failed_reports = []
 
         # 提前创建graded_reports_dir目录，用于存储临时文件
-        graded_reports_dir = os.path.join(GRADED_DIR, decoded_directory)
+        graded_reports_dir = os.path.join(GRADED_DIR, str(user_id), decoded_directory)
         os.makedirs(graded_reports_dir, exist_ok=True)
 
         # 创建输出子目录
-        output_subdir = os.path.join(OUTPUT_DIR, decoded_directory)
+        output_subdir = os.path.join(OUTPUT_DIR, str(user_id), decoded_directory)
         os.makedirs(output_subdir, exist_ok=True)
 
         # 创建线程锁，用于CSV文件写入的线程安全
@@ -1263,6 +1299,15 @@ async def annotate_report(scan_model: AnnotateScanModel, current_user: Dict[str,
                 files_to_process.append((filename, file_path))
 
         print(f"共找到 {len(files_to_process)} 个文件需要处理")
+
+        # 记录批阅开始日志
+        log_manager.log_grading_start(
+            user_id=current_user['id'],
+            directory_name=decoded_directory,
+            file_count=len(files_to_process),
+            model_used=scan_model.selected_model,
+            ip_address=request.client.host
+        )
 
         # 使用线程池并行处理文件，使用10个线程
         # 每个线程独立处理一个完整的文件（包括文件处理和大模型调用）
@@ -1318,6 +1363,7 @@ async def annotate_report(scan_model: AnnotateScanModel, current_user: Dict[str,
 
 
         # 创建综合报告CSV文件，包含所有报告的详细信息
+        comprehensive_csv_filename = None
         try:
             # 生成综合CSV文件名（使用时间戳确保唯一性）
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1325,6 +1371,8 @@ async def annotate_report(scan_model: AnnotateScanModel, current_user: Dict[str,
             
             # 将CSV文件保存到graded_reports目录，这样在压缩时会包含在内
             comprehensive_csv_path = os.path.join(graded_reports_dir, comprehensive_csv_filename)
+            # 同时保存到 output 目录，以便单独下载
+            output_comprehensive_csv_path = os.path.join(output_subdir, comprehensive_csv_filename)
 
             # 写入综合CSV文件
             with open(comprehensive_csv_path, 'w', newline='', encoding='utf-8-sig') as csvfile:
@@ -1379,15 +1427,21 @@ async def annotate_report(scan_model: AnnotateScanModel, current_user: Dict[str,
                         '备注': remarks
                     })
             
+            # 复制到 output 目录
+            shutil.copy2(comprehensive_csv_path, output_comprehensive_csv_path)
+
             print(f"综合报告评分汇总CSV已生成: {comprehensive_csv_path}")
         except Exception as csv_error:
             print(f"生成综合CSV文件失败: {str(csv_error)}")
+            comprehensive_csv_filename = None
 
         # 返回结果
         return {
             "message": f"成功扫描了 {len(documents_content)} 个文档",
             "failed_count": len(failed_reports),
-            "documents": documents_content
+            "documents": documents_content,
+            "csv_file": f"{decoded_directory}/{comprehensive_csv_filename}" if comprehensive_csv_filename else None,
+            "qualified_csv_file": f"{decoded_directory}/合格报告分数.csv"
         }
 
     except Exception as e:
@@ -1446,14 +1500,19 @@ async def reset_criteria(current_user: Dict[str, Any] = Depends(get_regular_user
 
 
 @app.post("/api/upload")
-async def upload_zip_file(file: UploadFile = File(...), current_user: Dict[str, Any] = Depends(get_regular_user)):
+async def upload_zip_file(
+    request: Request,
+    file: UploadFile = File(...),
+    current_user: Dict[str, Any] = Depends(get_regular_user)
+):
     """接收ZIP压缩文件，解压到student_reports目录（仅普通用户）"""
     if not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="只支持上传ZIP格式的压缩文件")
 
-    # 基于文件名创建目录
+    # 基于文件名创建目录，并包含用户ID
     dir_name = os.path.splitext(file.filename)[0]
-    extract_path = os.path.join("student_reports", dir_name)
+    user_id = current_user['id']
+    extract_path = os.path.join("student_reports", str(user_id), dir_name)
     os.makedirs(extract_path, exist_ok=True)
 
     # 使用临时文件管理器创建临时文件
@@ -1465,7 +1524,16 @@ async def upload_zip_file(file: UploadFile = File(...), current_user: Dict[str, 
 
             # 解压文件
             with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
+                # 统计文件数量
+                file_count = len([f for f in zip_ref.namelist() if not f.endswith('/')])
                 zip_ref.extractall(extract_path)
+            
+            # 记录上传日志
+            log_manager.log_file_upload(
+                user_id=current_user['id'],
+                file_count=file_count,
+                ip_address=request.client.host
+            )
 
         except Exception as e:
             # 清理
@@ -1488,9 +1556,27 @@ class SingleReportModel(BaseModel):
 async def grade_single_report(data: SingleReportModel, current_user: Dict[str, Any] = Depends(get_regular_user)):
     """批阅单个学生报告（仅普通用户）"""
     try:
+        # 验证文件路径是否属于当前用户
+        user_id = current_user['id']
+        allowed_base = os.path.abspath(os.path.join("student_reports", str(user_id)))
+        file_path = os.path.abspath(data.file_path)
+        
+        # 尝试拼接路径
+        if not file_path.startswith(allowed_base):
+             if not data.file_path.startswith(os.path.abspath("student_reports")):
+                 file_path = os.path.abspath(os.path.join("student_reports", str(user_id), data.file_path))
+             else:
+                 raise HTTPException(status_code=403, detail="权限不足：只能访问自己的文件")
+        
+        if not file_path.startswith(allowed_base):
+            raise HTTPException(status_code=403, detail="权限不足：只能访问自己的文件")
+
         # 确保文件存在
-        if not os.path.exists(data.file_path):
+        if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="文件不存在")
+        
+        # 更新 file_path 为完整路径
+        data.file_path = file_path
         
         # 调用 grade_single_student 函数
         result_path = grade_single_student(
@@ -1523,7 +1609,8 @@ async def delete_report_directory(directory_name: str, current_user: Dict[str, A
     try:
         # 确保目录名安全，防止路径遍历攻击
         safe_dir_name = os.path.normpath(directory_name).replace("..", "")
-        dir_path = os.path.join("student_reports", safe_dir_name)
+        user_id = current_user['id']
+        dir_path = os.path.join("student_reports", str(user_id), safe_dir_name)
         
         if not os.path.exists(dir_path):
             raise HTTPException(status_code=404, detail="目录不存在")
@@ -1548,7 +1635,8 @@ async def delete_graded_report_directory(directory_name: str, current_user: Dict
     try:
         # 确保目录名安全，防止路径遍历攻击
         safe_dir_name = os.path.normpath(directory_name).replace("..", "")
-        dir_path = os.path.join("graded_reports", safe_dir_name)
+        user_id = current_user['id']
+        dir_path = os.path.join("graded_reports", str(user_id), safe_dir_name)
         
         if not os.path.exists(dir_path):
             raise HTTPException(status_code=404, detail="目录不存在")
@@ -1565,6 +1653,22 @@ async def delete_graded_report_directory(directory_name: str, current_user: Dict
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"删除目录失败: {str(e)}")
+
+
+@app.get("/graded_reports/{directory_name}/{filename}")
+async def get_graded_file(directory_name: str, filename: str, current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """获取单个已批阅文件（仅普通用户）"""
+    # 验证目录名安全性
+    safe_dir_name = os.path.normpath(directory_name).replace("..", "")
+    safe_filename = os.path.normpath(filename).replace("..", "")
+    
+    user_id = current_user['id']
+    file_path = os.path.join("graded_reports", str(user_id), safe_dir_name, safe_filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="文件不存在")
+        
+    return FileResponse(file_path)
 
 
 @app.get("/api/temp/usage")
@@ -1966,21 +2070,61 @@ async def admin_get_recent_activities(
 
 
 @app.get("/api/download-csv")
-async def download_csv(file_path: str, current_user: Dict[str, Any] = Depends(get_regular_user)):
+async def download_csv(
+    request: Request,
+    file_path: str,
+    current_user: Dict[str, Any] = Depends(get_regular_user)
+):
     """下载CSV文件（仅普通用户）"""
     try:
         # 确保路径安全，防止路径遍历攻击
         safe_path = os.path.normpath(file_path).replace("..", "")
-        full_path = os.path.abspath(safe_path)
+        # 只允许访问输出目录下的用户子目录
+        user_id = current_user['id']
+        allowed_base = os.path.abspath(os.path.join(OUTPUT_DIR, str(user_id)))
         
-        # 只允许访问输出目录下的文件
-        allowed_base = os.path.abspath(OUTPUT_DIR)
+        # 构造完整路径：由于file_path是相对路径（例如 user_id/dir/file.csv），
+        # 但前端可能只传递了 dir/file.csv，或者包含 user_id。
+        # 这里假设前端传递的是相对于 output 目录的路径。
+        # 为了安全，我们强制路径必须在用户的 output 目录下。
+        
+        # 简化逻辑：前端可能传递完整路径或者相对路径。
+        # 我们这里重新构建路径，确保它是 output/user_id/...
+        
+        # 如果 file_path 包含 user_id 前缀，去掉它（简单起见，假设前端传递的是 dir/file.csv）
+        # 或者我们修改前端，或者在这里做更强的检查。
+        
+        # 假设 file_path 是 output/user_id/dir/file.csv 的相对部分，即 user_id/dir/file.csv
+        # 或者是 dir/file.csv。
+        
+        # 让我们假设前端会根据文件列表返回的路径来请求。
+        # 如果我们修改了 output 结构，前端看到的路径会改变吗？
+        # 目前没有 API 返回 CSV 文件列表，通常是批阅后生成。
+        
+        # 让我们采取保守策略：检查路径是否包含 user_id。
+        full_path = os.path.abspath(file_path)
+        
         if not full_path.startswith(allowed_base):
-            raise HTTPException(status_code=403, detail="访问被拒绝")
+             # 尝试将 user_id 加进去
+             if not file_path.startswith(os.path.abspath(OUTPUT_DIR)):
+                 full_path = os.path.abspath(os.path.join(OUTPUT_DIR, str(user_id), file_path))
+             else:
+                 # 如果已经是绝对路径但不在允许范围内，拒绝
+                 raise HTTPException(status_code=403, detail="访问被拒绝")
         
+        if not full_path.startswith(allowed_base):
+             raise HTTPException(status_code=403, detail="访问被拒绝：只能下载自己的文件")
+
         if not os.path.exists(full_path):
             raise HTTPException(status_code=404, detail="文件不存在")
         
+        # 记录下载日志
+        log_manager.log_file_download(
+            user_id=current_user['id'],
+            file_name=os.path.basename(full_path),
+            ip_address=request.client.host
+        )
+
         return FileResponse(
             path=full_path,
             filename=os.path.basename(full_path),

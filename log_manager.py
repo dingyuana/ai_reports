@@ -99,6 +99,19 @@ class LogManager:
             ip_address=ip_address
         )
     
+    def log_file_download(
+        self,
+        user_id: int,
+        file_name: str,
+        ip_address: Optional[str] = None
+    ):
+        self.log_action(
+            user_id=user_id,
+            action="download",
+            details=f"下载文件: {file_name}",
+            ip_address=ip_address
+        )
+    
     def get_user_logs(
         self,
         user_id: int,
@@ -122,25 +135,48 @@ class LogManager:
             print(f"获取用户日志失败: {e}")
             return []
     
-    def get_all_logs(
+    def get_logs(
         self,
+        action: Optional[str] = None,
+        user_id: Optional[int] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
         limit: int = 100,
         offset: int = 0
     ):
         try:
+            query = """
+                SELECT id, user_id, action, details, ip_address, created_at
+                FROM logs
+                WHERE 1=1
+            """
+            params = []
+            
+            if action:
+                query += " AND action = %s"
+                params.append(action)
+            
+            if user_id:
+                query += " AND user_id = %s"
+                params.append(user_id)
+                
+            if start_date:
+                query += " AND created_at >= %s"
+                params.append(start_date)
+                
+            if end_date:
+                query += " AND created_at <= %s"
+                params.append(end_date)
+                
+            query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
+            params.extend([limit, offset])
+            
             with get_db_cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT id, user_id, action, details, ip_address, created_at
-                    FROM logs
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (limit, offset)
-                )
+                cursor.execute(query, tuple(params))
                 return cursor.fetchall()
         except Exception as e:
-            print(f"获取所有日志失败: {e}")
+            print(f"获取日志失败: {e}")
             return []
+
 
 log_manager = LogManager()

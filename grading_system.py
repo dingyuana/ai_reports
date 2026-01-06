@@ -143,9 +143,22 @@ class GradingSystem:
                         f"{file_name}_converted.pdf"
                     )
                     
-                    # 转换为PDF
-                    if not word_processor.convert_to_pdf(report_path, converted_pdf_path):
-                        logger.error(f"转换Word文件为PDF失败: {report_path}")
+                    # 转换为PDF（带重试机制）
+                    conversion_success = False
+                    max_retries = 10
+                    for attempt in range(max_retries):
+                        if word_processor.convert_to_pdf(report_path, converted_pdf_path):
+                            conversion_success = True
+                            break
+                        else:
+                            if attempt < max_retries - 1:
+                                wait_time = 1  # 移除指数退避，固定等待1秒
+                                logger.warning(f"转换Word文件为PDF失败 (尝试 {attempt + 1}/{max_retries}): {report_path}，等待 {wait_time} 秒后重试...")
+                                time.sleep(wait_time)
+                            else:
+                                logger.error(f"转换Word文件为PDF失败 (尝试 {attempt + 1}/{max_retries}): {report_path}")
+
+                    if not conversion_success:
                         continue
                     
                     # 切换到PDF处理器

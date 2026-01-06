@@ -513,35 +513,41 @@ def create_pdf_comment_pages(comments, orig_page):
         return []
 
 
-def convert_word_to_pdf(word_path, pdf_path):
-    """将Word文档转换为PDF格式"""
+def convert_word_to_pdf(word_path, pdf_path, max_retries=10):
+    """将Word文档转换为PDF格式，带重试机制"""
     if not COMTYPES_AVAILABLE:
         print("    comtypes not available, cannot convert Word to PDF in this environment.")
         return False
         
-    try:
-        pythoncom.CoInitialize()
+    for attempt in range(max_retries):
+        try:
+            pythoncom.CoInitialize()
 
-        # 创建Word应用实例
-        word = comtypes.client.CreateObject("Word.Application")
-        word.Visible = False
+            # 创建Word应用实例
+            word = comtypes.client.CreateObject("Word.Application")
+            word.Visible = False
 
-        # 打开Word文件
-        doc = word.Documents.Open(os.path.abspath(word_path))
+            # 打开Word文件
+            doc = word.Documents.Open(os.path.abspath(word_path))
 
-        # 另存为PDF
-        doc.SaveAs(os.path.abspath(pdf_path), FileFormat=17)  # 17 = wdFormatPDF
+            # 另存为PDF
+            doc.SaveAs(os.path.abspath(pdf_path), FileFormat=17)  # 17 = wdFormatPDF
 
-        # 关闭文档和Word应用
-        doc.Close()
-        word.Quit()
+            # 关闭文档和Word应用
+            doc.Close()
+            word.Quit()
 
-        return True
-    except Exception as e:
-        print(f"    Word转PDF失败: {str(e)}")
-        return False
-    finally:
-        pythoncom.CoUninitialize()
+            return True
+        except Exception as e:
+            print(f"    Word转PDF失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+            if attempt < max_retries - 1:
+                wait_time = 1  # 移除指数退避，固定等待1秒
+                print(f"    等待 {wait_time} 秒后重试...")
+                time.sleep(wait_time)
+        finally:
+            pythoncom.CoUninitialize()
+            
+    return False
 
 
 # def generate_graded_pdf(input_pdf_path, output_pdf_path, score, comments):
