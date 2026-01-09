@@ -6,6 +6,13 @@ echo "========================================="
 echo "   AI报告批阅系统 - 停止脚本"
 echo "========================================="
 
+# 首先清理所有批阅相关进程
+echo "正在停止所有批阅任务..."
+pkill -9 -f "python.*api_server" 2>/dev/null
+pkill -9 -f "uvicorn.*api_server" 2>/dev/null
+pkill -9 -f "python.*grade" 2>/dev/null
+sleep 2
+
 # 检查PID文件是否存在
 if [ ! -f "logs/server.pid" ]; then
     echo "警告: 未找到logs/server.pid文件"
@@ -55,9 +62,17 @@ done
 
 # 如果进程仍在运行，强制终止
 echo "强制终止进程..."
-kill -9 $PID
+kill -9 $PID 2>/dev/null
 sleep 1
 
 # 清理PID文件
 rm -f logs/server.pid
+
+# 最终清理
+echo "正在最终清理..."
+pkill -9 -f "python.*api_server" 2>/dev/null
+pkill -9 -f "uvicorn.*api_server" 2>/dev/null
+pkill -9 -f "python.*grade" 2>/dev/null
+
 echo "✓ 服务器已强制停止"
+echo "✓ 所有批阅任务已中止"

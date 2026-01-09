@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cargo \
     poppler-utils \
     libreoffice \
+    fonts-wqy-microhei \
+    fonts-wqy-zenhei \
  && rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
@@ -35,13 +37,14 @@ COPY . .
 
 # 设置环境变量（让程序能直接找到临时目录）
 ENV TMP_DIR=/app/tmp
+ENV PORT=8000
 
 # 暴露端口
-EXPOSE 7654
+EXPOSE 8000
 
 # 以非 root 用户运行，提高安全性
 RUN useradd -m appuser && chown -R appuser /app
 USER appuser
 
 # 启动应用
-CMD ["python", "-c", "from api_server import app; import uvicorn; import os; port = int(os.getenv('PORT', 7654)); uvicorn.run(app, host='0.0.0.0', port=port)"]
+CMD ["python", "-c", "from api_server import app; import uvicorn; import os; port = int(os.getenv('PORT', 8000)); uvicorn.run(app, host='0.0.0.0', port=port)"]

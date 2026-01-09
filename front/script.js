@@ -83,6 +83,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     let selectedDirectory = null;
+    let gradingAbortController = null;
 
     // 左侧面板元素
     const studentReportsPanel = document.getElementById('student-reports-panel');
@@ -112,7 +113,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const resultsTitleEl = document.getElementById('results-title');
     const reportListEl = document.getElementById('report-list');
     const reportLoadingEl = document.getElementById('report-loading');
-    const csvDownloadLinkEl = document.getElementById('csv-download-link');
 
     /**
      * 通用函数：创建文件/目录树
@@ -422,28 +422,36 @@ document.addEventListener('DOMContentLoaded', () => {
         resultsTitleEl.textContent = `批阅结果: ${selectedDirectory}`;
         reportListEl.innerHTML = '';
         reportLoadingEl.classList.remove('hidden');
-        csvDownloadLinkEl.classList.add('hidden');
+        
+        // 隐藏之前可能存在的合格报告下载链接
+        const existingQualifiedLink = resultsContainerEl.querySelector('.qualified-csv-link');
+        if (existingQualifiedLink) existingQualifiedLink.remove();
         
         submitGradingBtn.textContent = '正在批阅...';
         submitGradingBtn.disabled = true;
 
-        // 获取选中的大模型
-            const modelSelect = document.getElementById('model-select');
-            const selectedModel = modelSelect.value;
-            
-            const payload = {
-                directory: selectedDirectory,
-                add_markings: addMarkingsCheckbox.checked,
-                ai_review: aiReviewCheckbox.checked,
-                auto_grading: autoGradingCheckbox.checked,
-                selected_model: selectedModel
-            };
+        // 显示批阅提示
+        const gradingProgress = document.getElementById('grading-progress');
+        gradingProgress.classList.remove('hidden');
+        gradingProgress.className = 'grading-progress';
+        gradingProgress.textContent = '批阅报告时间较长，请等待本窗口消失后，完成批阅。';
+
+        gradingAbortController = new AbortController();
+
+        const payload = {
+            directory: selectedDirectory,
+            add_markings: addMarkingsCheckbox.checked,
+            ai_review: aiReviewCheckbox.checked,
+            auto_grading: autoGradingCheckbox.checked,
+            selected_model: document.getElementById('model-select').value
+        };
 
         try {
             const response = await apiRequest(`${API_BASE_URL}/api/annotate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
+                signal: gradingAbortController.signal
             });
 
             if (!response.ok) {
@@ -454,45 +462,46 @@ document.addEventListener('DOMContentLoaded', () => {
             
             renderReportResults(result.documents);
             
-            // 在所有文件批注完成后，刷新两个报告列表
             await fetchAndRenderGradedReports();
             await fetchAndRenderStudentReports();
 
-            // 处理不合格报告CSV
-            if (result.failed_count > 0 && result.csv_file) {
-                csvDownloadLinkEl.href = `${API_BASE_URL}/api/download-csv?file_path=${encodeURIComponent(result.csv_file)}`;
-                csvDownloadLinkEl.textContent = '下载不合格报告 (CSV)';
-                csvDownloadLinkEl.classList.remove('hidden');
-            }
+            // 显示完成提示
+            gradingProgress.className = 'grading-progress completed';
+            gradingProgress.textContent = '批阅完成！';
             
-            // 处理合格报告CSV
-            if (result.qualified_csv_file) {
-                const qualifiedCsvLink = document.createElement('a');
-                qualifiedCsvLink.className = 'button';
-                qualifiedCsvLink.href = `${API_BASE_URL}/api/download-csv?file_path=${encodeURIComponent(result.qualified_csv_file)}`;
-                qualifiedCsvLink.textContent = '下载合格报告成绩 (CSV)';
-                qualifiedCsvLink.download = '';
-                qualifiedCsvLink.style.marginLeft = '10px';
-                
-                // 添加到结果容器
-                const header = resultsContainerEl.querySelector('.results-header');
-                if (header) {
-                    header.appendChild(qualifiedCsvLink);
-                }
-            }
-
-            // 所有文件批注完成后，自动关闭结果弹出窗口
+            // 批阅完成后不显示下载链接，直接关闭窗口
             setTimeout(() => {
                 resultsContainerEl.classList.add('hidden');
+                // 清理临时添加的元素
+                const existingQualifiedLink = resultsContainerEl.querySelector('.qualified-csv-link');
+                if (existingQualifiedLink) existingQualifiedLink.remove();
             }, 3000);
 
         } catch (error) {
-            console.error('批阅时出错:', error);
-            reportListEl.innerHTML = `<p class="error">批阅失败: ${error.message}</p>`;
+            if (error.name === 'AbortError') {
+                console.log('批阅已被中止');
+                gradingProgress.className = 'grading-progress aborted';
+                gradingProgress.textContent = '批阅已中止';
+                reportListEl.innerHTML = `<p class="info">批阅已中止</p>`;
+            } else {
+                console.error('批阅时出错:', error);
+                gradingProgress.className = 'grading-progress aborted';
+                gradingProgress.textContent = '批阅失败';
+                reportListEl.innerHTML = `<p class="error">批阅失败: ${error.message}</p>`;
+            }
         } finally {
             reportLoadingEl.classList.add('hidden');
             submitGradingBtn.textContent = '开始批阅选定目录';
             submitGradingBtn.disabled = false;
+            
+            // 批阅完成后隐藏进度显示
+            setTimeout(() => {
+                gradingProgress.classList.add('hidden');
+                const existingQualifiedLink = resultsContainerEl.querySelector('.qualified-csv-link');
+                if (existingQualifiedLink) existingQualifiedLink.remove();
+            }, 3000);
+            
+            gradingAbortController = null;
         }
     }
 
@@ -697,7 +706,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('save-config-btn').addEventListener('click', handleSaveConfig);
     document.getElementById('load-config-btn').addEventListener('click', handleLoadConfig);
     submitGradingBtn.addEventListener('click', submitGrading);
-
+    
     // --- 批阅要求实时预览 ---
     criteriaInputEl.addEventListener('input', () => {
         const markdownText = criteriaInputEl.value;

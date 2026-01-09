@@ -57,12 +57,32 @@ if [ ! -f "config.py" ]; then
     echo "请确保已正确配置API密钥和其他设置"
 fi
 
-# 检查端口8000是否被占用
+# 检查端口8000是否被占用并强制停止
+echo "正在检查端口8000..."
 if lsof -Pi :8000 -sTCP:LISTEN -t >/dev/null 2>&1; then
     echo "警告: 端口8000已被占用"
-    echo "正在尝试终止占用端口的进程..."
+    echo "正在终止所有相关进程..."
+    
+    # 停止后台服务
+    if [ -f "logs/server.pid" ]; then
+        OLD_PID=$(cat logs/server.pid)
+        kill -9 $OLD_PID 2>/dev/null
+        rm -f logs/server.pid
+        echo "已停止旧服务进程: $OLD_PID"
+    fi
+    
+    # 强制终止占用端口的进程
     lsof -ti:8000 | xargs kill -9 2>/dev/null
-    sleep 2
+    
+    # 清理所有批阅相关进程
+    pkill -9 -f "python.*api_server" 2>/dev/null
+    pkill -9 -f "uvicorn.*api_server" 2>/dev/null
+    pkill -9 -f "python.*grade" 2>/dev/null
+    
+    sleep 3
+    echo "所有批阅任务已停止"
+else
+    echo "端口8000可用"
 fi
 
 # 启动API服务器（后台运行）
@@ -80,9 +100,10 @@ echo ""
 mkdir -p logs
 
 # 使用uv run启动FastAPI应用（后台运行）
-# nohup uv run uvicorn api_server:app --host 0.0.0.0 --port 8000 --reload > logs/server.log 2>&1 &
-# SERVER_PID=$!
-uv run uvicorn api_server:app --host 0.0.0.0 --port 8000 
+# 强制使用HTTP协议
+echo "正在启动HTTP服务器..."
+nohup uv run uvicorn api_server:app --host 0.0.0.0 --port 8000 > logs/server.log 2>&1 &
+SERVER_PID=$!
 
 
 # 保存PID到文件

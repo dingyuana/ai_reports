@@ -5,11 +5,11 @@ services:
     build: .
     container_name: ai_report_app
     ports:
-      - "7654:7654"
+      - "8000:8000"
     env_file:
       - .env
     environment:
-      - PORT=7654
+      - PORT=8000
       - REPORTS_DIR=/app/student_reports
       - OUTPUT_DIR=/app/graded_reports
       - TEMP_DIR=/app/tmp

@@ -38,6 +38,7 @@ graded_reports/
 student_reports/
 output/
 reports/
+temp/
 *.log
 *.xlsx
 *.docx
@@ -47,8 +48,13 @@ reports/
 .DS_Store
 Thumbs.db
 
+# Documents
 .doc
 .docx
 .pdf
 .xlsx
 .json
+
+# Docker
+*.log
+docker-compose.override.yml

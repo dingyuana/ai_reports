@@ -15,9 +15,9 @@
                 <div class="model-selection">
                     <label for="model-select">大模型选择：</label>
                     <select id="model-select">
-                        <option value="doubao-seed-1-6-lite-251015" selected>豆包 (Doubao)</option>
-                        <option value="thudm/glm-z1-9b-0414">THUDM/GLM-Z1-9B-0414 (SiliconFlow)</option>
+                        <option value="thudm/glm-z1-9b-0414" selected>THUDM/GLM-Z1-9B-0414 (SiliconFlow)</option>
                         <option value="qwen/qwen3-8b">Qwen/Qwen3-8B (SiliconFlow)</option>
+                        <option value="doubao-seed-1-6-lite-251015">豆包 (Doubao)</option>
                         <option value="Qwen/QwQ-32B">Qwen/QwQ-32B (SiliconFlow)</option>
                     </select>
                 </div>
@@ -140,7 +140,9 @@
                 <button class="close-results" aria-label="关闭">&times;</button>
                 <div class="results-header">
                     <h2 id="results-title">扫描结果</h2>
-                    <a id="csv-download-link" class="button hidden" download>下载不合格报告 (CSV)</a>
+                    <div class="results-actions">
+                        <span id="grading-progress" class="grading-progress hidden"></span>
+                    </div>
                 </div>
                 <div id="report-list">
                     <!-- 报告评估结果将由JS动态加载 -->

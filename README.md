@@ -420,12 +420,12 @@ chmod +x scripts/setup_with_uv.sh
   - PDF处理：`poppler-utils`
 - **Python依赖**：使用国内pip源安装requirements
 - **安全措施**：创建非root用户运行应用
-- **端口暴露**：暴露端口7654
+- **端口暴露**：暴露端口8000
 - **启动命令**：使用uvicorn运行FastAPI应用
 
 #### Docker Compose
 - **服务名称**：`ai_report_app`
-- **端口映射**：将容器端口7654映射到主机端口7654
+- **端口映射**：将容器端口8000映射到主机端口8000
 - **数据卷**：
   - `ai_report_student_reports`：学生报告存储
   - `ai_report_graded_reports`：已评分报告存储

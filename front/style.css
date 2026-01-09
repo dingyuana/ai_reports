@@ -411,17 +411,45 @@ header h1 {
     padding-bottom: 1rem;
 }
 
+.results-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+#abort-grading-btn {
+    background-color: var(--danger-color);
+}
+
+#abort-grading-btn:hover {
+    background-color: #c82333;
+}
+
+.grading-progress {
+    font-size: 14px;
+    color: var(--primary-color);
+    font-weight: 500;
+    padding: 8px 16px;
+    background-color: rgba(61, 90, 254, 0.1);
+    border-radius: 4px;
+    border: 1px solid var(--primary-color);
+}
+
+.grading-progress.completed {
+    color: var(--success-color);
+    background-color: rgba(40, 167, 69, 0.1);
+    border-color: var(--success-color);
+}
+
+.grading-progress.aborted {
+    color: var(--warning-color);
+    background-color: rgba(255, 193, 7, 0.1);
+    border-color: var(--warning-color);
+}
+
 #results-title {
     margin-bottom: 0; /* 移除标题下边距 */
     border-bottom: none;
-}
-
-#csv-download-link {
-    background-color: var(--success-color);
-}
-
-#csv-download-link:hover {
-    background-color: #218838;
 }
 
 /* 报告卡片 */
