@@ -1,19 +1,42 @@
-version: '3.8'
-
-# SSL/HTTPS configuration override for docker-compose
-# Use this file in addition to the main docker-compose.yml for HTTPS support
+version: "3.9"
 
 services:
+  # Nginx反向代理 - 提供SSL终止和负载均衡
   nginx:
-    volumes:
-      # Override default configuration with SSL configuration
-      - ./nginx/ssl.conf:/etc/nginx/conf.d/default.conf:ro
-      # Mount SSL certificates
-      - ./ssl:/etc/nginx/ssl:ro
+    image: nginx:alpine
+    container_name: ai_report_nginx
     ports:
-      # Map both HTTP and HTTPS ports
-      - "80:80"
-      - "443:443"
+      - "${NGINX_PORT:-80}:80"
+      - "${NGINX_SSL_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - ai_report_nginx_logs:/var/log/nginx
+    networks:
+      - grading-network
+    restart: unless-stopped
+    depends_on:
+      - app
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 应用服务 - 使用内部网络通信
+  app:
+    ports: []  # 移除端口暴露，仅通过Nginx访问
+    networks:
+      - grading-network
     environment:
-      # Enable SSL mode
       - SSL_ENABLED=true
+      - SSL_KEYFILE=/app/ssl/key.pem
+      - SSL_CERTFILE=/app/ssl/cert.pem
+    volumes:
+      - ./ssl:/app/ssl:ro
+
+networks:
+  grading-network:
+    driver: bridge

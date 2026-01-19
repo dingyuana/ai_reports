@@ -1,70 +1,68 @@
-version: '3.8'
-
-# Monitoring and logging stack for the grading system
-# Use this file in addition to the main docker-compose.yml
+version: "3.9"
 
 services:
+  # Prometheus - 监控数据收集
   prometheus:
     image: prom/prometheus:latest
-    container_name: grading-system-prometheus
-    restart: unless-stopped
+    container_name: ai_report_prometheus
     ports:
       - "9090:9090"
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--web.console.libraries=/etc/prometheus/console_libraries'
       - '--web.console.templates=/etc/prometheus/consoles'
-      - '--storage.tsdb.retention.time=200h'
       - '--web.enable-lifecycle'
     networks:
-      - grading-network
       - monitoring-network
+    restart: unless-stopped
 
+  # Grafana - 监控数据可视化
   grafana:
     image: grafana/grafana:latest
-    container_name: grading-system-grafana
-    restart: unless-stopped
+    container_name: ai_report_grafana
     ports:
       - "3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
     environment:
-      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
     networks:
       - monitoring-network
+    restart: unless-stopped
     depends_on:
       - prometheus
 
-  node-exporter:
+  # Node Exporter - 系统指标收集
+  node_exporter:
     image: prom/node-exporter:latest
-    container_name: grading-system-node-exporter
-    restart: unless-stopped
+    container_name: ai_report_node_exporter
     ports:
       - "9100:9100"
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
     command:
       - '--path.procfs=/host/proc'
       - '--path.rootfs=/rootfs'
       - '--path.sysfs=/host/sys'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
     networks:
       - monitoring-network
+    restart: unless-stopped
 
+  # cAdvisor - 容器指标收集
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
-    container_name: grading-system-cadvisor
-    restart: unless-stopped
+    container_name: ai_report_cadvisor
     ports:
       - "8080:8080"
     volumes:
@@ -74,68 +72,31 @@ services:
       - /var/lib/docker/:/var/lib/docker:ro
       - /dev/disk/:/dev/disk:ro
     privileged: true
-    devices:
-      - /dev/kmsg
     networks:
       - monitoring-network
-
-  loki:
-    image: grafana/loki:latest
-    container_name: grading-system-loki
     restart: unless-stopped
-    ports:
-      - "3100:3100"
-    volumes:
-      - ./monitoring/loki.yml:/etc/loki/local-config.yaml:ro
-      - loki_data:/loki
-    command: -config.file=/etc/loki/local-config.yaml
-    networks:
-      - monitoring-network
 
-  promtail:
-    image: grafana/promtail:latest
-    container_name: grading-system-promtail
-    restart: unless-stopped
-    volumes:
-      - ./monitoring/promtail.yml:/etc/promtail/config.yml:ro
-      - /var/log:/var/log:ro
-      - app_logs:/var/log/app:ro
-      - nginx_logs:/var/log/nginx:ro
-    command: -config.file=/etc/promtail/config.yml
-    networks:
-      - monitoring-network
-    depends_on:
-      - loki
-
+  # Alertmanager - 告警管理
   alertmanager:
     image: prom/alertmanager:latest
-    container_name: grading-system-alertmanager
-    restart: unless-stopped
+    container_name: ai_report_alertmanager
     ports:
       - "9093:9093"
     volumes:
-      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
       - alertmanager_data:/alertmanager
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
       - '--storage.path=/alertmanager'
-      - '--web.external-url=http://localhost:9093'
     networks:
       - monitoring-network
+    restart: unless-stopped
 
 volumes:
   prometheus_data:
-    driver: local
   grafana_data:
-    driver: local
-  loki_data:
-    driver: local
   alertmanager_data:
-    driver: local
 
 networks:
   monitoring-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.21.0.0/16

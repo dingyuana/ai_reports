@@ -34,7 +34,7 @@ import logging
 import os
 from file_manager import FileManager
 from ai_grader import AIGrader
-from document_processor import PDFProcessor, WordProcessor
+from document_processor import PDFProcessor, WordProcessor, MarkdownProcessor
 
 # 配置日志记录器
 logger = logging.getLogger(__name__)
@@ -49,7 +49,8 @@ class GradingSystem:
         self.document_processors = {
             '.pdf': PDFProcessor(),
             '.docx': WordProcessor(),
-            '.doc': WordProcessor()
+            '.doc': WordProcessor(),
+            '.md': MarkdownProcessor()
         }
         self.grading_criteria = ""
 

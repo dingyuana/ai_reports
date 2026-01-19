@@ -1,0 +1,58 @@
+global:
+  resolve_timeout: 5m
+
+  # SMTP配置 - 用于发送邮件告警
+  # 请根据实际情况修改以下配置
+  smtp_smarthost: 'smtp.example.com:587'
+  smtp_from: 'alertmanager@example.com'
+  smtp_auth_username: 'alertmanager@example.com'
+  smtp_auth_password: 'your_password'
+
+# 路由配置
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+  receiver: 'default'
+
+  routes:
+    # 严重告警
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      continue: true
+
+    # 警告告警
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+
+# 接收器配置
+# 请根据实际情况修改以下邮箱地址
+receivers:
+  - name: 'default'
+    email_configs:
+      - to: 'admin@example.com'
+        headers:
+          Subject: '[AI Report Grading] Alert: {{ .GroupLabels.alertname }}'
+
+  - name: 'critical-alerts'
+    email_configs:
+      - to: 'admin@example.com,ops@example.com'
+        headers:
+          Subject: '[CRITICAL] AI Report Grading Alert: {{ .GroupLabels.alertname }}'
+
+  - name: 'warning-alerts'
+    email_configs:
+      - to: 'admin@example.com'
+        headers:
+          Subject: '[WARNING] AI Report Grading Alert: {{ .GroupLabels.alertname }}'
+
+# 抑制规则
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'instance']

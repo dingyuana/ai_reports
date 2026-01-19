@@ -1,11 +1,12 @@
 import logging
-from config import API_CONFIG, REPORTS_DIR, OUTPUT_DIR, LOG_CONFIG
-from grading_system import GradingSystem
-from api_server import app as api_app
+from config import LOG_CONFIG
 
 # 配置日志
 logging.basicConfig(**LOG_CONFIG)
 logger = logging.getLogger(__name__)
+
+# 从新的api模块导入FastAPI应用
+from api import api_app
 
 # 导出FastAPI应用，用于uvicorn启动
 report = api_app

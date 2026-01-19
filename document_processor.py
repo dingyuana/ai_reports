@@ -340,6 +340,46 @@ class PDFProcessor(DocumentProcessor):
             output_pdf.write(out_f)
 
 
+class MarkdownProcessor(DocumentProcessor):
+    """Markdown文档处理实现"""
+
+    def extract_text(self, file_path: str) -> str:
+        """从Markdown中提取文本"""
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+
+    def add_comments_and_score(self, file_path: str, comments: str, score: int, output_path: str, add_score: bool = True) -> None:
+        """在Markdown上添加评语和分数"""
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # 添加分数和评语
+        result = content
+        if add_score:
+            result += f"\n\n---\n## 评分结果\n**分数**: {score}\n\n---\n"
+        result += f"## 教师评语\n{comments}\n"
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(result)
+
+    def add_checkmarks(self, file_path: str, output_path: str) -> None:
+        """在Markdown文档的每个主要部分添加对号"""
+        with open(file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        result_lines = []
+        for line in lines:
+            # 在以#开头的标题行后添加对号
+            if line.startswith('#'):
+                result_lines.append(line)
+                result_lines.append("✓\n")
+            else:
+                result_lines.append(line)
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.writelines(result_lines)
+
+
 class WordProcessor(DocumentProcessor):
     """Word文档处理实现"""
     

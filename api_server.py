@@ -54,7 +54,9 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 # JWT配置
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here-change-in-production")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY environment variable is required")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
@@ -65,12 +67,15 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # 配置CORS
+# 允许的前端域名列表，可以通过环境变量配置
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[origin.strip() for origin in ALLOWED_ORIGINS],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
 # 配置常量
@@ -855,9 +860,11 @@ def convert_word_to_pdf_with_retry(
     pdf_path: str,
     max_retries: int = 10,
     cancel_event=None,
+    base_delay: float = 0.5,
+    max_delay: float = 5.0,
 ) -> bool:
     """
-    带重试机制的Word转PDF函数
+    带指数退避重试机制的Word转PDF函数
 
     Args:
         word_processor: Word处理器实例
@@ -865,6 +872,8 @@ def convert_word_to_pdf_with_retry(
         pdf_path: 输出的PDF文件路径
         max_retries: 最大重试次数，默认10次
         cancel_event: 用于中断任务的事件对象
+        base_delay: 基础延迟时间（秒）
+        max_delay: 最大延迟时间（秒）
 
     Returns:
         转换成功返回True，失败返回False
@@ -872,49 +881,49 @@ def convert_word_to_pdf_with_retry(
     for attempt in range(max_retries):
         # 检查是否需要取消任务
         if cancel_event and cancel_event.is_set():
-            print(f"任务已取消，停止转换Word文件: {word_path}")
+            logger.info(f"任务已取消，停止转换Word文件: {word_path}")
             return False
 
         try:
-            print(
-                f"尝试转换Word文件为PDF (尝试 {attempt + 1}/{max_retries}): {word_path}"
-            )
+            logger.info(f"尝试转换Word文件为PDF (尝试 {attempt + 1}/{max_retries}): {word_path}")
 
             # 尝试转换
             result = word_processor.convert_to_pdf(word_path, pdf_path)
 
             if result:
-                print(f"Word文件转换成功: {word_path} -> {pdf_path}")
+                logger.info(f"Word文件转换成功: {word_path} -> {pdf_path}")
                 return True
             else:
-                print(f"Word文件转换失败 (尝试 {attempt + 1}/{max_retries})")
+                logger.warning(f"Word文件转换失败 (尝试 {attempt + 1}/{max_retries}): {word_path}")
 
                 # 如果不是最后一次尝试，等待后重试
                 if attempt < max_retries - 1:
-                    wait_time = 1  # 移除指数退避，固定等待1秒
-                    print(f"等待 {wait_time} 秒后重试...")
+                    # 使用指数退避算法，限制最大延迟
+                    delay = min(base_delay * (2 ** attempt), max_delay)
+                    logger.info(f"等待 {delay:.2f} 秒后重试...")
                     if cancel_event:
-                        if cancel_event.wait(wait_time):
-                            print(f"任务已取消，停止等待")
+                        if cancel_event.wait(delay):
+                            logger.info(f"任务已取消，停止等待")
                             return False
                     else:
-                        time.sleep(wait_time)
+                        time.sleep(delay)
 
         except Exception as e:
-            print(f"Word文件转换异常 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+            logger.error(f"Word文件转换异常 (尝试 {attempt + 1}/{max_retries}): {word_path}, 错误: {str(e)}")
 
             # 如果不是最后一次尝试，等待后重试
             if attempt < max_retries - 1:
-                wait_time = 1  # 移除指数退避，固定等待1秒
-                print(f"等待 {wait_time} 秒后重试...")
+                # 使用指数退避算法，限制最大延迟
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                logger.info(f"等待 {delay:.2f} 秒后重试...")
                 if cancel_event:
-                    if cancel_event.wait(wait_time):
-                        print(f"任务已取消，停止等待")
+                    if cancel_event.wait(delay):
+                        logger.info(f"任务已取消，停止等待")
                         return False
                 else:
-                    time.sleep(wait_time)
+                    time.sleep(delay)
 
-    print(f"Word文件转换失败，已达到最大重试次数 {max_retries}: {word_path}")
+    logger.error(f"Word文件转换失败，已达到最大重试次数 {max_retries}: {word_path}")
     return False
 
 
@@ -2593,13 +2602,25 @@ async def abort_grading(
 
     with grading_tasks_lock:
         if task_key in grading_tasks:
-            grading_tasks[task_key].set()  # 设置事件以通知任务取消
-            # 等待更长时间让任务有机会响应取消信号
-            import time
+            cancel_event = grading_tasks[task_key]
+            cancel_event.set()  # 设置事件以通知任务取消
 
             # 分阶段等待，给任务足够时间响应取消
-            for i in range(50):  # 等待最多10秒
-                time.sleep(0.2)
+            total_wait = 0
+            max_wait = 10  # 最大等待时间10秒
+            check_interval = 0.5  # 检查间隔0.5秒
+            
+            while total_wait < max_wait:
+                # 释放锁，让任务有机会检查取消事件并清理自己
+                grading_tasks_lock.release()
+                
+                try:
+                    time.sleep(check_interval)
+                    total_wait += check_interval
+                finally:
+                    # 重新获取锁
+                    grading_tasks_lock.acquire()
+                
                 if task_key not in grading_tasks:
                     # 任务已经自己清理了
                     logger.info(f"批阅任务 {task_key} 已停止")

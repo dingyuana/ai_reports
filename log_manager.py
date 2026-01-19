@@ -25,7 +25,9 @@ class LogManager:
                     (user_id, action, details, ip_address, user_agent)
                 )
         except Exception as e:
-            print(f"记录日志失败: {e}")
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"记录日志失败: {e}")
     
     def log_user_login(self, user_id: int, ip_address: Optional[str] = None, user_agent: Optional[str] = None):
         self.log_action(

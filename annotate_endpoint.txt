@@ -1,0 +1,239 @@
+@app.post("/api/annotate")
+async def annotate_report(
+    request: Request,
+    scan_model: AnnotateScanModel,
+    current_user: Dict[str, Any] = Depends(get_regular_user),
+):
+    """批注报告接口 - 完整版本（仅普通用户）"""
+    try:
+        # 解码目录名称
+        decoded_directory = unquote(scan_model.directory)
+        user_id = current_user["id"]
+        scan_path = os.path.join("student_reports", str(user_id), decoded_directory)
+
+        # 检查目录是否存在
+        if not os.path.exists(scan_path):
+            raise HTTPException(
+                status_code=404, detail=f"目录不存在: {decoded_directory}"
+            )
+
+        # 创建输出目录
+        graded_reports_dir = os.path.join(
+            GRADED_DIR, str(user_id), decoded_directory
+        )
+        os.makedirs(graded_reports_dir, exist_ok=True)
+        output_subdir = os.path.join(OUTPUT_DIR, str(user_id), decoded_directory)
+        os.makedirs(output_subdir, exist_ok=True)
+
+        # 收集所有需要处理的文件
+        files_to_process = []
+        for filename in os.listdir(scan_path):
+            file_path = os.path.join(scan_path, filename)
+            if os.path.isfile(file_path):
+                files_to_process.append((filename, file_path))
+
+        logger.info(f"用户 {current_user['username']} 开始批阅目录: {decoded_directory}, 共 {len(files_to_process)} 个文件")
+
+        # 记录批阅开始日志
+        log_manager.log_grading_start(
+            user_id=current_user["id"],
+            directory_name=decoded_directory,
+            file_count=len(files_to_process),
+            model_used=scan_model.selected_model,
+            ip_address=request.client.host,
+        )
+
+        # 设置评分标准
+        grading_system.set_grading_criteria(GRADING_CRITERIA)
+
+        # 处理所有报告文件
+        documents_content = []
+        failed_reports = []
+
+        for filename, file_path in files_to_process:
+            try:
+                logger.info(f"正在处理报告: {filename}")
+                file_ext = os.path.splitext(filename)[1].lower()
+
+                # 检查文件格式是否支持
+                if file_ext not in grading_system.document_processors:
+                    logger.warning(f"不支持的文件格式: {file_ext}")
+                    documents_content.append({
+                        "filename": filename,
+                        "type": file_ext.replace('.', ''),
+                        "content": "",
+                        "status": "不支持",
+                        "score": 0,
+                        "comments": "不支持的文件格式",
+                        "size": os.path.getsize(file_path),
+                        "ai_failed": False,
+                    })
+                    continue
+
+                # 获取文档处理器
+                processor = grading_system.document_processors[file_ext]
+
+                # 提取报告文本
+                report_text = processor.extract_text(file_path)
+
+                # AI批阅
+                result = grading_system.ai_grader.grade_report(report_text, GRADING_CRITERIA)
+
+                # 构建输出文件名
+                base_name = os.path.basename(file_path)
+                file_name, _ = os.path.splitext(base_name)
+
+                # 处理结果
+                document_status = "合格" if result["score"] >= scan_model.min_score else "不合格"
+                documents_content.append({
+                    "filename": filename,
+                    "type": file_ext.replace('.', ''),
+                    "content": report_text[:100] + "..." if len(report_text) > 100 else report_text,
+                    "status": document_status,
+                    "score": result["score"],
+                    "comments": result["comments"][:100] + "..." if len(result["comments"]) > 100 else result["comments"],
+                    "size": os.path.getsize(file_path),
+                    "ai_failed": False,
+                })
+
+                # 记录不合格报告
+                if document_status == "不合格":
+                    failed_reports.append({
+                        "username": file_name.split('_')[0] if '_' in file_name else file_name,
+                        "status": "不合格",
+                        "filename": filename,
+                    })
+
+                logger.info(f"文件 {filename} 处理完成，状态: {document_status}, 分数: {result['score']}")
+
+            except Exception as e:
+                logger.error(f"处理报告时出错: {filename}, 错误: {str(e)}")
+                documents_content.append({
+                    "filename": filename,
+                    "type": os.path.splitext(filename)[1].lower().replace('.', ''),
+                    "content": "",
+                    "status": "处理失败",
+                    "score": 0,
+                    "comments": str(e),
+                    "size": os.path.getsize(file_path),
+                    "ai_failed": True,
+                })
+
+        # 创建综合报告CSV文件，包含所有报告的详细信息
+        comprehensive_csv_filename = None
+        try:
+            # 生成综合CSV文件名（使用时间戳确保唯一性）
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            comprehensive_csv_filename = f"报告评分汇总_{timestamp}.csv"
+
+            # 将CSV文件保存到graded_reports目录，这样在压缩时会包含在内
+            comprehensive_csv_path = os.path.join(
+                graded_reports_dir, comprehensive_csv_filename
+            )
+            # 同时保存到 output 目录，以便单独下载
+            output_comprehensive_csv_path = os.path.join(
+                output_subdir, comprehensive_csv_filename
+            )
+
+            # 写入综合CSV文件
+            with open(
+                comprehensive_csv_path, "w", newline="", encoding="utf-8-sig"
+            ) as csvfile:
+                fieldnames = [
+                    "学号",
+                    "姓名",
+                    "实验名称",
+                    "得分",
+                    "评语",
+                    "状态",
+                    "备注",
+                ]
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+                writer.writeheader()
+
+                # 遍历所有处理过的文档
+                for doc in documents_content:
+                    # 从文件名中提取信息
+                    filename = doc["filename"]
+                    parts = filename.split("-")
+
+                    # 尝试提取学号、姓名、实验名称
+                    student_id = "未知"
+                    student_name = "未知"
+                    experiment_name = "未知"
+
+                    if len(parts) >= 3:
+                        # 假设文件名格式：班级-学号-姓名-实验名称.pdf
+                        student_id = parts[1]  # 学号
+                        student_name = parts[2].split(".")[0]  # 姓名
+                        # 提取实验名称（移除文件扩展名）
+                        experiment_name = (
+                            "-".join(parts[3:]).split(".")[0]
+                            if len(parts) > 3
+                            else "未知"
+                        )
+                    else:
+                        # 如果文件名格式不符合预期，使用文件名作为实验名称
+                        student_name = filename.split(".")[0]
+                        experiment_name = filename.split(".")[0]
+
+                    # 获取报告状态和备注
+                    status = doc["status"]
+                    remarks = ""
+                    if status == "未知" or status == "不合格":
+                        remarks = doc.get("comments", "未能正确识别判断")
+
+                    # 如果AI评估失败，在备注中标记
+                    if doc.get("ai_failed", False):
+                        if remarks:
+                            remarks += "；AI评估失败"
+                        else:
+                            remarks = "AI评估失败"
+
+                    # 写入CSV行
+                    writer.writerow(
+                        {
+                            "学号": student_id,
+                            "姓名": student_name,
+                            "实验名称": experiment_name,
+                            "得分": doc["score"],
+                            "评语": doc["comments"],
+                            "状态": status,
+                            "备注": remarks,
+                        }
+                    )
+
+            # 复制到 output 目录
+            shutil.copy2(comprehensive_csv_path, output_comprehensive_csv_path)
+
+            logger.info(f"综合报告评分汇总CSV已生成: {comprehensive_csv_path}")
+        except Exception as csv_error:
+            logger.error(f"生成综合CSV文件失败: {str(csv_error)}")
+            comprehensive_csv_filename = None
+
+        # 记录批阅完成日志
+        log_manager.log_grading_complete(
+            user_id=current_user["id"],
+            directory_name=decoded_directory,
+            qualified_count=len([d for d in documents_content if d.get("status") == "合格"]),
+            unqualified_count=len(failed_reports),
+            ip_address=request.client.host,
+        )
+
+        logger.info(f"用户 {current_user['username']} 完成批阅目录: {decoded_directory}, 共处理 {len(documents_content)} 个文件，不合格 {len(failed_reports)} 个")
+
+        # 返回结果
+        return {
+            "message": f"成功批阅了 {len(documents_content)} 个文档",
+            "failed_count": len(failed_reports),
+            "documents": documents_content,
+            "csv_file": f"{decoded_directory}/{comprehensive_csv_filename}"
+            if comprehensive_csv_filename
+            else None,
+            "qualified_csv_file": f"{decoded_directory}/合格报告分数.csv",
+        }
+
+    except Exception as e:
+        logger.error(f"处理报告时出错: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"处理报告时出错: {str(e)}")
