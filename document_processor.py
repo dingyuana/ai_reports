@@ -26,9 +26,6 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.colors import Color
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-
-# 注册中文字体
-pdfmetrics.registerFont(TTFont('WenQuanYi-ZenHei', '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc'))
 from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 import pdfplumber
@@ -40,6 +37,34 @@ except ImportError:
 
 # 配置日志记录器
 logger = logging.getLogger(__name__)
+
+# 注册中文字体（尝试多种字体作为备选）
+CHINESE_FONT_NAME = 'Helvetica'  # 默认使用Helvetica
+CHINESE_FONT_PATH = None
+
+# 按优先级顺序尝试不同的字体（TTC和TTF都支持）
+font_candidates = [
+    ('ChineseFont', '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc'),
+    ('ChineseFont', '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc'),
+    ('ChineseFont', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'),
+    ('ChineseFont', '/usr/share/fonts/truetype/freefont/FreeSans.ttf'),
+    ('ChineseFont', '/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf'),
+]
+
+for font_name, font_path in font_candidates:
+    if os.path.exists(font_path):
+        try:
+            pdfmetrics.registerFont(TTFont(font_name, font_path))
+            CHINESE_FONT_NAME = font_name
+            CHINESE_FONT_PATH = font_path
+            logger.info(f"成功注册中文字体: {font_path}")
+            break
+        except Exception as e:
+            logger.warning(f"注册字体失败 {font_path}: {e}")
+            continue
+
+if CHINESE_FONT_NAME == 'Helvetica':
+    logger.warning("未找到可用的中文字体，将使用默认字体Helvetica")
 
 
 class DocumentProcessor(ABC):
@@ -132,19 +157,19 @@ class PDFProcessor(DocumentProcessor):
         comment_canvas = canvas.Canvas(comment_packet, pagesize=letter)
         
         # 使用支持中文的字体
-        comment_canvas.setFont("WenQuanYi-ZenHei", 14)
+        comment_canvas.setFont(CHINESE_FONT_NAME, 14)
             
         comment_canvas.setFillColor(Color(1, 0, 0, alpha=0.8))  # 红色
         
         # 添加标题
-        comment_canvas.setFont("WenQuanYi-ZenHei", 16)  # 使用中文字体，减小标题字号
+        comment_canvas.setFont(CHINESE_FONT_NAME, 16)  # 使用中文字体，减小标题字号
         comment_canvas.drawString(50, 750, "批阅评语")
         
         # 设置评语内容字体
-        comment_canvas.setFont("WenQuanYi-ZenHei", 14)  # 使用中文字体
+        comment_canvas.setFont(CHINESE_FONT_NAME, 14)  # 使用中文字体
         
         # 分行显示评语，确保处理中文换行并控制宽度不超出页面
-        def split_text_to_lines(text, max_width, canvas, font_name="WenQuanYi-ZenHei", font_size=14):
+        def split_text_to_lines(text, max_width, canvas, font_name=CHINESE_FONT_NAME, font_size=14):
             """将文本分割为适合页面宽度的行，支持中英文混合文本
             
             Args:
@@ -209,7 +234,7 @@ class PDFProcessor(DocumentProcessor):
         for line in lines:
             if y_pos < 100:  # 如果空间不够，开始新页
                     comment_canvas.showPage()
-                    comment_canvas.setFont("WenQuanYi-ZenHei", 14)  # 确保新页面也使用中文字体和14点字号
+                    comment_canvas.setFont(CHINESE_FONT_NAME, 14)  # 确保新页面也使用中文字体和14点字号
                     comment_canvas.setFillColor(Color(1, 0, 0, alpha=0.8))
                     y_pos = 750
             comment_canvas.drawString(50, y_pos, line)
