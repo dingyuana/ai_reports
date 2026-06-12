@@ -118,6 +118,9 @@ class AnnotateScanModel(BaseModel):
 grading_tasks = {}
 grading_tasks_lock = threading.Lock()
 
+MAX_CONCURRENT_AI = int(os.getenv("MAX_CONCURRENT_AI", "3"))
+ai_api_semaphore = threading.Semaphore(MAX_CONCURRENT_AI)
+
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1132,7 +1135,6 @@ def process_single_file(
                 }
 
             if not is_basic_qualified:
-                # 如果不合格，直接记录结果
                 evaluation = {
                     "score": 0,
                     "is_qualified": False,
@@ -1140,7 +1142,6 @@ def process_single_file(
                     "reasons": ["内容长度不足"],
                 }
             else:
-                # 检查是否需要取消任务
                 if cancel_event and cancel_event.is_set():
                     return {
                         "filename": filename,
@@ -1153,22 +1154,24 @@ def process_single_file(
                         "ai_failed": False,
                     }
 
-                # 如果基本合格，再调用ARK模型进行详细评估
-                # 注意：这里需要同步调用，因为在线程池中不能使用async
                 import asyncio
 
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+                ai_api_semaphore.acquire()
                 try:
-                    response = loop.run_until_complete(
-                        invoke_ark_model(
-                            prompt,
-                            model_name=scan_model.selected_model,
-                            cancel_event=cancel_event,
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        response = loop.run_until_complete(
+                            invoke_ark_model(
+                                prompt,
+                                model_name=scan_model.selected_model,
+                                cancel_event=cancel_event,
+                            )
                         )
-                    )
+                    finally:
+                        loop.close()
                 finally:
-                    loop.close()
+                    ai_api_semaphore.release()
 
                 logger.info(f"ARK模型评估结果: {response}")
 
@@ -1177,7 +1180,7 @@ def process_single_file(
                         "score": 50,
                         "is_qualified": True,
                         "comments": "无法获取AI评估，使用默认评估",
-                        "reasons": ["AI评估失败，已重试10次"],
+                        "reasons": ["AI评估失败，已重试20次"],
                         "ai_failed": True,
                     }
                 else:

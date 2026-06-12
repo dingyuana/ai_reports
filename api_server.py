@@ -186,6 +186,10 @@ grading_system = GradingSystem(REPORTS_DIR, OUTPUT_DIR, API_CONFIG)
 grading_tasks = {}
 grading_tasks_lock = threading.Lock()
 
+# AI API 并发控制：限制同时向 AI 服务发送的请求数，防止触发限流
+MAX_CONCURRENT_AI = int(os.getenv("MAX_CONCURRENT_AI", "3"))
+ai_api_semaphore = threading.Semaphore(MAX_CONCURRENT_AI)
+
 
 # 认证相关的Pydantic模型
 class UserLogin(BaseModel):
@@ -714,7 +718,7 @@ async def run_in_threadpool(func, *args, **kwargs):
 async def invoke_ark_model(
     prompt: str,
     model_name: str = "Qwen/QwQ-32B",
-    max_retries: int = 10,
+    max_retries: int = 20,
     timeout: int = 120,
     cancel_event=None,
 ) -> Optional[str]:
@@ -774,6 +778,39 @@ async def invoke_ark_model(
                     else:
                         raise Exception(
                             f"豆包API请求失败，状态码: {response.status_code}, 错误信息: {response.text}"
+                        )
+
+            elif model_name.startswith("GLM-4-Flash"):
+                # 调用智谱AI GLM-4-Flash模型API
+                API_KEY = os.getenv("AI_API_KEY", "")
+                API_URL = os.getenv("AI_API_ENDPOINT", "https://open.bigmodel.cn/api/paas/v4") + "/chat/completions"
+
+                # 构建请求参数
+                payload = {
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.7,
+                    "max_tokens": 4096,
+                }
+
+                # 发送请求
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {API_KEY}",
+                }
+
+                # 使用httpx异步客户端，支持取消
+                timeout = httpx.Timeout(timeout, connect=10.0)
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await client.post(API_URL, json=payload, headers=headers)
+
+                    # 处理响应
+                    if response.status_code == 200:
+                        result = response.json()
+                        return result["choices"][0]["message"]["content"]
+                    else:
+                        raise Exception(
+                            f"智谱AI API请求失败，状态码: {response.status_code}, 错误信息: {response.text}"
                         )
 
             elif model_name in [
@@ -1015,7 +1052,7 @@ def process_single_file(
                     "content": "",
                     "status": "处理失败",
                     "score": 0,
-                    "comments": "转换失败（已重试10次）",
+                    "comments": "转换失败（已重试20次）",
                     "size": os.path.getsize(file_path),
                     "ai_failed": False,
                 }
@@ -1087,7 +1124,7 @@ def process_single_file(
                         "content": "",
                         "status": "转换失败",
                         "score": 0,
-                        "comments": "转换失败（已重试5次）",
+                        "comments": "转换失败（已重试20次）",
                         "size": os.path.getsize(file_path),
                         "ai_failed": False,
                     }
@@ -1158,7 +1195,6 @@ def process_single_file(
                 }
 
             if not is_basic_qualified:
-                # 如果不合格，直接记录结果
                 evaluation = {
                     "score": 0,
                     "is_qualified": False,
@@ -1166,7 +1202,6 @@ def process_single_file(
                     "reasons": ["内容长度不足"],
                 }
             else:
-                # 检查是否需要取消任务
                 if cancel_event and cancel_event.is_set():
                     return {
                         "filename": filename,
@@ -1179,22 +1214,24 @@ def process_single_file(
                         "ai_failed": False,
                     }
 
-                # 如果基本合格，再调用ARK模型进行详细评估
-                # 注意：这里需要同步调用，因为在线程池中不能使用async
                 import asyncio
 
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+                ai_api_semaphore.acquire()
                 try:
-                    response = loop.run_until_complete(
-                        invoke_ark_model(
-                            prompt,
-                            model_name=scan_model.selected_model,
-                            cancel_event=cancel_event,
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        response = loop.run_until_complete(
+                            invoke_ark_model(
+                                prompt,
+                                model_name=scan_model.selected_model,
+                                cancel_event=cancel_event,
+                            )
                         )
-                    )
+                    finally:
+                        loop.close()
                 finally:
-                    loop.close()
+                    ai_api_semaphore.release()
 
                 print(f"ARK模型评估结果: {response}")
 
@@ -1203,7 +1240,7 @@ def process_single_file(
                         "score": 50,
                         "is_qualified": True,
                         "comments": "无法获取AI评估，使用默认评估",
-                        "reasons": ["AI评估失败，已重试10次"],
+                        "reasons": ["AI评估失败，已重试20次"],
                         "ai_failed": True,
                     }
                 else:
@@ -1357,7 +1394,7 @@ def process_single_file(
                             "content": content[:5000],
                             "status": "转换失败",
                             "score": 0,
-                            "comments": "转换失败（已重试10次）",
+                            "comments": "转换失败（已重试20次）",
                             "size": os.path.getsize(file_path),
                             "ai_failed": False,
                         }
@@ -1711,9 +1748,9 @@ async def annotate_report(
                         # 如果AI评估失败，在备注中标记
                         if doc.get("ai_failed", False):
                             if remarks:
-                                remarks += "；AI评估失败（已重试10次）"
+                                remarks += "；AI评估失败（已重试20次）"
                             else:
-                                remarks = "AI评估失败（已重试10次）"
+                                remarks = "AI评估失败（已重试20次）"
 
                         # 写入CSV行
                         writer.writerow(
@@ -2557,20 +2594,20 @@ async def serve_login_js():
     return FileResponse("front/login.js")
 
 
-@app.get("/admin.css")
-async def serve_admin_css():
-    """服务admin.css"""
-    from fastapi.responses import FileResponse
-
-    return FileResponse("front/admin.css")
-
-
 @app.get("/admin_users.js")
 async def serve_admin_users_js():
     """服务admin_users.js"""
     from fastapi.responses import FileResponse
 
     return FileResponse("front/admin_users.js")
+
+
+@app.get("/admin_dashboard.js")
+async def serve_admin_dashboard_js():
+    """服务admin_dashboard.js"""
+    from fastapi.responses import FileResponse
+
+    return FileResponse("front/admin_dashboard.js")
 
 
 @app.get("/admin_logs.js")
@@ -2581,12 +2618,12 @@ async def serve_admin_logs_js():
     return FileResponse("front/admin_logs.js")
 
 
-@app.get("/admin_dashboard.js")
-async def serve_admin_dashboard_js():
-    """服务admin_dashboard.js"""
+@app.get("/admin.css")
+async def serve_admin_css():
+    """服务admin.css"""
     from fastapi.responses import FileResponse
 
-    return FileResponse("front/admin_dashboard.js")
+    return FileResponse("front/admin.css")
 
 
 @app.post("/api/abort-grading")
