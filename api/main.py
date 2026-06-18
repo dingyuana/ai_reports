@@ -530,7 +530,7 @@ async def annotate_report(
             # 线程间任务互不干涉，避免API速率限制和资源压力
             from concurrent.futures import as_completed, wait, FIRST_COMPLETED
 
-            with ThreadPoolExecutor(max_workers=10) as executor:
+            with ThreadPoolExecutor(max_workers=1) as executor:
                 # 提交所有任务到线程池
                 future_to_file = {
                     executor.submit(
