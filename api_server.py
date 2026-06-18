@@ -51,6 +51,11 @@ from datetime import timedelta
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+class RateLimitError(Exception):
+    """API 限流错误"""
+    pass
+
 app = FastAPI()
 
 # JWT配置
@@ -775,6 +780,8 @@ async def invoke_ark_model(
                     if response.status_code == 200:
                         result = response.json()
                         return result["choices"][0]["message"]["content"]
+                    elif response.status_code == 429:
+                        raise RateLimitError(f"豆包API限流，状态码: 429")
                     else:
                         raise Exception(
                             f"豆包API请求失败，状态码: {response.status_code}, 错误信息: {response.text}"
@@ -808,6 +815,8 @@ async def invoke_ark_model(
                     if response.status_code == 200:
                         result = response.json()
                         return result["choices"][0]["message"]["content"]
+                    elif response.status_code == 429:
+                        raise RateLimitError(f"智谱AI API限流，状态码: 429")
                     else:
                         raise Exception(
                             f"智谱AI API请求失败，状态码: {response.status_code}, 错误信息: {response.text}"
@@ -847,6 +856,8 @@ async def invoke_ark_model(
                     if response.status_code == 200:
                         result = response.json()
                         return result["choices"][0]["message"]["content"]
+                    elif response.status_code == 429:
+                        raise RateLimitError(f"硅基流动API限流，状态码: 429")
                     else:
                         raise Exception(
                             f"API请求失败，状态码: {response.status_code}, 错误信息: {response.text}"
@@ -862,23 +873,34 @@ async def invoke_ark_model(
                     f"AI模型 {model_name} 请求超时，已达到最大重试次数: {max_retries}"
                 )
                 return None
+        except RateLimitError as e:
+            print(f"AI模型 {model_name} 限流 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+            if attempt == max_retries - 1:
+                raise
+            wait_time = min(2 ** attempt, 30)
+            print(f"限流等待 {wait_time} 秒后重试...")
+            step = 0.5
+            slept = 0
+            while slept < wait_time:
+                if cancel_event and cancel_event.is_set():
+                    print("任务已取消，停止等待")
+                    return None
+                await asyncio.sleep(min(step, wait_time - slept))
+                slept += step
         except Exception as e:
             print(
                 f"AI模型 {model_name} 调用失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}"
             )
 
-            # 如果已经是最后一次尝试，则返回None
             if attempt == max_retries - 1:
                 print(
                     f"AI模型 {model_name} 调用失败，已达到最大重试次数: {max_retries}"
                 )
                 return None
 
-        # 减少等待时间以快速响应取消事件
-        wait_time = 1  # 固定等待1秒
+        wait_time = 1
         print(f"等待 {wait_time} 秒后重试...")
 
-        # 分步等待，以便及时响应取消事件
         step = 0.5
         slept = 0
         while slept < wait_time:
@@ -1230,6 +1252,18 @@ def process_single_file(
                         )
                     finally:
                         loop.close()
+                except RateLimitError:
+                    return {
+                        "filename": filename,
+                        "type": ext.upper().replace(".", ""),
+                        "content": content[:5000],
+                        "status": "rate_limited",
+                        "score": 0,
+                        "comments": "API限流，待重试",
+                        "size": os.path.getsize(file_path),
+                        "ai_failed": True,
+                        "retry": True,
+                    }
                 finally:
                     ai_api_semaphore.release()
 
@@ -1561,7 +1595,6 @@ async def annotate_report(
 
             print(f"共找到 {len(files_to_process)} 个文件需要处理")
 
-            # 记录批阅开始日志
             log_manager.log_grading_start(
                 user_id=current_user["id"],
                 directory_name=decoded_directory,
@@ -1570,13 +1603,11 @@ async def annotate_report(
                 ip_address=request.client.host,
             )
 
-            # 使用线程池并行处理文件，使用10个线程
-            # 每个线程独立处理一个完整的文件（包括文件处理和大模型调用）
-            # 线程间任务互不干涉，避免API速率限制和资源压力
             from concurrent.futures import as_completed, wait, FIRST_COMPLETED
 
+            rate_limited_files = []
+
             with ThreadPoolExecutor(max_workers=1) as executor:
-                # 提交所有任务到线程池
                 future_to_file = {
                     executor.submit(
                         process_single_file,
@@ -1589,46 +1620,44 @@ async def annotate_report(
                         scan_model,
                         qualified_csv_lock,
                         current_user["id"],
-                        cancel_event,  # 传递取消事件
+                        cancel_event,
                     ): (filename, file_path)
                     for filename, file_path in files_to_process
                 }
 
-                # 收集处理结果，每次处理一个已完成的任务
                 remaining_futures = list(future_to_file.keys())
 
                 while remaining_futures:
-                    # 检查是否需要取消任务
                     if cancel_event.is_set():
                         print("批阅任务被中断")
-                        # 强制取消未开始的任务
                         for remaining_future in remaining_futures:
                             remaining_future.cancel()
-
-                        # 等待正在运行的任务完成或超时
                         for remaining_future in remaining_futures:
                             if not remaining_future.cancelled():
                                 try:
                                     remaining_future.result(timeout=2)
                                 except:
-                                    pass  # 忽略异常，因为我们正在取消
+                                    pass
                         break
 
-                    # 等待至少一个任务完成或超时（短超时以快速响应取消）
                     completed_futures, remaining_futures = wait(
                         remaining_futures,
-                        timeout=1,  # 1秒超时，以便快速响应取消事件
+                        timeout=1,
                         return_when=FIRST_COMPLETED,
                     )
 
-                    # 处理已完成的任务
                     for completed_future in completed_futures:
                         filename, file_path = future_to_file[completed_future]
                         try:
                             result = completed_future.result()
+
+                            if result.get("status") == "rate_limited":
+                                rate_limited_files.append((filename, file_path))
+                                print(f"文件 {filename} 被限流，加入重试队列")
+                                continue
+
                             documents_content.append(result)
 
-                            # 记录不合格报告
                             if result.get("status") == "不合格":
                                 user_name = (
                                     filename.split("_")[0]
@@ -1654,6 +1683,49 @@ async def annotate_report(
                                     "type": "Unknown",
                                     "content": "",
                                     "status": "处理失败",
+                                    "score": 0,
+                                    "comments": str(e),
+                                    "size": os.path.getsize(file_path),
+                                    "ai_failed": False,
+                                }
+                            )
+
+            if rate_limited_files and not cancel_event.is_set():
+                print(f"\n有 {len(rate_limited_files)} 个文件被限流，等待 10 秒后重试...")
+                time.sleep(10)
+
+                with ThreadPoolExecutor(max_workers=1) as retry_executor:
+                    retry_future_to_file = {
+                        retry_executor.submit(
+                            process_single_file,
+                            filename,
+                            file_path,
+                            scan_path,
+                            decoded_directory,
+                            graded_reports_dir,
+                            output_subdir,
+                            scan_model,
+                            qualified_csv_lock,
+                            current_user["id"],
+                            cancel_event,
+                        ): (filename, file_path)
+                        for filename, file_path in rate_limited_files
+                    }
+
+                    for retry_future in as_completed(retry_future_to_file):
+                        filename, file_path = retry_future_to_file[retry_future]
+                        try:
+                            result = retry_future.result()
+                            documents_content.append(result)
+                            print(f"重试文件 {filename} 完成，状态: {result.get('status')}")
+                        except Exception as e:
+                            print(f"重试文件 {filename} 失败: {str(e)}")
+                            documents_content.append(
+                                {
+                                    "filename": filename,
+                                    "type": "Unknown",
+                                    "content": "",
+                                    "status": "重试失败",
                                     "score": 0,
                                     "comments": str(e),
                                     "size": os.path.getsize(file_path),
