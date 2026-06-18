@@ -93,46 +93,38 @@ CRITERIA_FILE = "criteria.json"  # 批阅要求存储文件
 DEFAULT_GRADING_CRITERIA = """
 请依据以下评分标准对学生提交的大学实训报告进行客观、公正的批阅打分。
 
-评分标准
-总分100分，实际得分范围要在指定分数之间。评分需兼顾标准要求与分数正态分布特性，避免集中出现逢五、逢十的整数分数。
+【核心批阅纪律】
 
-1. 内容完整性（34分） 
-- 核心要素齐全（21分）：报告需完整包含实验目的、实验原理、实验步骤、实验结果、实验分析与总结等必要核心部分。
-- 过程描述清晰（13分）：实验过程文字描述逻辑连贯、条理清晰，能准确反映实验操作的先后顺序和关键细节。
+严格执行正态分布：总分100分，实际得分应呈现合理的梯度分布。严禁大量给出90分以上的虚高分数，尽量避免给出逢五、逢十的整数分数（如80、85、90等），建议多使用如82、87、76等精确分数。
+重内容轻形式：格式规范仅为基本门槛，评分重心必须放在实训内容的深度、逻辑性及反思质量上。
+逐维度对照评分：各维度得分汇总为总分，扣分需有理有据。
 
-2. 格式规范性（23分）
-- 文档格式规范（23分）：报告标题、目录、正文段落、字体字号、行间距、页码等格式需完全符合实训报告统一要求。
+【评分维度与细则】（总分100分）
 
-3. 内容相关性（26分）
-- 主题贴合紧密（14分）：报告正文内容与本次实训实验主题高度相关，无偏离主题的无关内容。
-- 结果目的相符（12分）：实验结果能对实验目的进行有效回应，实验结论与实验目的保持一致。
-- 不考虑截图，流程图及各种图表的要求
+一、 内容质量与深度（40分）
 
- 4. 原创性（17分）
-- 内容原创无抄袭（11分）：报告的实验分析、总结与反思等核心内容为学生原创，无直接抄袭教材、网络或他人报告的情况。
-- 引用成果标注规范（6分）：引用他人理论、数据、观点等成果时，需准确标明出处，引用格式规范。
+核心要素与逻辑（15分）：报告需完整包含实验目的、原理、步骤、结果、分析与总结。过程描述需逻辑连贯、条理清晰，准确反映操作先后顺序与关键细节，杜绝"流水账"式记录。
+结果与目的的契合度（10分）：实验结果必须对实验目的进行有效回应，结论需由数据或现象严谨推导得出，前后逻辑自洽。
+分析反思与原创性（15分）：实验分析、总结与反思必须为学生深度思考的原创内容，严禁直接抄袭教材或网络。能结合实训过程中的突发问题、误差来源或改进方案进行深度剖析者得高分；仅有表面描述、缺乏独立思考者，此项最高不超过8分。
 
-批阅要求
-1. 逐维度对照细则评分，各维度得分汇总为总分，总分需在指定分数之间。
-2. 保证分数正态分布，避免大量报告集中在某一分数段，尽量避免给出65、70、75、80、85、90等分数。
-3. 撰写总评语，不列出具体扣分分数，字数控制在200字左右，明确指出报告的优点与不足，评语具有指导性。
+二、 内容相关性与专业度（30分）
 
-# 评分标准（总分100分，实际得分范围60-95分）
-# 1.内容完整性（25分）
-#   包含实验目的、步骤、结果等必要部分（15分）
-#   实验过程描述清晰，逻辑连贯（10分）
-# 2.格式规范性（20分）
-#   标题、段落、图表等格式规范（10分）
-#   图表有标题和说明，引用规范（10分）
-# 3.内容相关性（20分）
-#   内容与实验主题紧密相关（10分）
-#   实验结果与实验目的相符（10分）
-# 4. 原创性（15分）
-#   报告内容原创，无抄袭嫌疑（10分）
-#   引用他人成果已标明出处（5分）
-# 5. 非文本内容（20分）
-#   配套图片、表格等非文本内容齐全（10分）
-#   非文本内容与文本内容紧密结合，有助于理解（10分）
+主题贴合度（15分）：正文内容与本次实训主题高度相关，无偏题、凑字数等无关内容。
+专业素养体现（15分）：能准确使用专业术语，体现对实训核心技能的掌握。引用他人理论、数据、观点时，需准确标明出处且引用格式规范。若无引用内容，此项按"专业术语使用与表达"进行评分。
+
+三、 格式规范与排版（10分）
+
+文档格式规范（10分）：报告标题、目录、正文段落、字体字号、行间距、页码等需符合统一要求。此项为基本门槛，存在明显格式错误酌情扣分，无重大错误即可得满分。
+
+四、 学术诚信与原创底线（20分）
+
+内容原创无抄袭（20分）：报告核心内容必须为原创。如发现大段抄袭教材、网络或他人报告，此项直接记0分，并视情节严重程度对总分进行额外扣除（扣5-10分）。
+
+【批阅输出要求】
+
+给出各维度得分及总分（总分需符合正态分布，避开整数）。
+撰写总评语，不列出具体扣分分数，字数控制在200字左右。
+评语必须明确指出报告的"核心亮点"与"致命不足"，并给出具有指导性的改进建议。
 """
 
 # 全局变量，用于在内存中存储评分标准
@@ -1916,6 +1908,113 @@ async def reset_criteria(current_user: Dict[str, Any] = Depends(get_regular_user
 
     logger.info(f"用户 {current_user['username']} 已恢复默认评分标准")
     return {"message": "评分标准已恢复为默认值"}
+
+
+# --- 批阅标准管理 API ---
+
+class CriteriaSaveModel(BaseModel):
+    name: str
+    criteria: str
+    min_score: int = 60
+    max_score: int = 95
+
+
+@app.get("/api/criteria/list")
+async def get_criteria_list(current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """获取用户所有批阅标准列表"""
+    criteria_list = config_manager.get_all_criteria(current_user["id"])
+    return {"data": criteria_list}
+
+
+@app.post("/api/criteria/save")
+async def save_criteria(data: CriteriaSaveModel, current_user: Dict[str, Any] = Depends(get_regular_user)):
+    """保存新的批阅标准"""
+    criteria_id = config_manager.create_criteria(
+        user_id=current_user["id"],
+        name=data.name,
+        criteria=data.criteria,
+        min_score=data.min_score,
+        max_score=data.max_score
+    )
+    
+    if criteria_id is None:
+        raise HTTPException(status_code=500, detail="保存批阅标准失败")
+    
+    logger.info(f"用户 {current_user['username']} 创建了新的批阅标准: {data.name}")
+    return {"message": "批阅标准保存成功", "id": criteria_id}
+
+
+@app.put("/api/criteria/{criteria_id}")
+async def update_criteria(
+    criteria_id: int,
+    data: CriteriaSaveModel,
+    current_user: Dict[str, Any] = Depends(get_regular_user)
+):
+    """更新批阅标准"""
+    success = config_manager.update_criteria(
+        user_id=current_user["id"],
+        criteria_id=criteria_id,
+        name=data.name,
+        criteria=data.criteria,
+        min_score=data.min_score,
+        max_score=data.max_score
+    )
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="更新批阅标准失败")
+    
+    logger.info(f"用户 {current_user['username']} 更新了批阅标准: {criteria_id}")
+    return {"message": "批阅标准更新成功"}
+
+
+@app.delete("/api/criteria/{criteria_id}")
+async def delete_criteria(
+    criteria_id: int,
+    current_user: Dict[str, Any] = Depends(get_regular_user)
+):
+    """删除批阅标准"""
+    success = config_manager.delete_criteria(
+        user_id=current_user["id"],
+        criteria_id=criteria_id
+    )
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="删除批阅标准失败")
+    
+    logger.info(f"用户 {current_user['username']} 删除了批阅标准: {criteria_id}")
+    return {"message": "批阅标准删除成功"}
+
+
+@app.post("/api/criteria/{criteria_id}/activate")
+async def activate_criteria(
+    criteria_id: int,
+    current_user: Dict[str, Any] = Depends(get_regular_user)
+):
+    """激活并使用指定的批阅标准"""
+    success = config_manager.set_active_criteria(
+        user_id=current_user["id"],
+        criteria_id=criteria_id
+    )
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="激活批阅标准失败")
+    
+    logger.info(f"用户 {current_user['username']} 激活了批阅标准: {criteria_id}")
+    return {"message": "批阅标准已激活"}
+
+
+@app.get("/api/criteria/{criteria_id}")
+async def get_criteria_by_id(
+    criteria_id: int,
+    current_user: Dict[str, Any] = Depends(get_regular_user)
+):
+    """获取单个批阅标准详情"""
+    criteria = config_manager.get_criteria_by_id(current_user["id"], criteria_id)
+    
+    if criteria is None:
+        raise HTTPException(status_code=404, detail="批阅标准不存在")
+    
+    return criteria
 
 
 @app.post("/api/upload")
